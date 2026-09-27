@@ -1,0 +1,15 @@
+target/
+*.class
+*.jar
+*.war
+.env
+.idea/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+Thumbs.db
+.vscode/
+Account Service BRD.md
+PLAN.md
+TEST_SCENARIOS.md
