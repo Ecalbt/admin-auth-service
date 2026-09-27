@@ -11,7 +11,7 @@ import org.springframework.data.domain.Pageable;
  */
 public interface AdminManagementService {
 
-    AdminDetailDto createAdmin(CreateAdminRequest req, AdminPrincipal actor);
+    CreateAdminResponse createAdmin(CreateAdminRequest req, AdminPrincipal actor);
 
     AdminDetailDto updateAdmin(String adminId, UpdateAdminRequest req, AdminPrincipal actor);
 

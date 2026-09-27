@@ -17,8 +17,6 @@ public record CreateAdminRequest(
 
         String fullName,
 
-        String initialPassword,
-
         @NotBlank(message = "Initial role code is required")
         String roleCode,
 

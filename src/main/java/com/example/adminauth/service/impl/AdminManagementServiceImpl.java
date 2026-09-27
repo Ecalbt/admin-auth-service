@@ -45,7 +45,7 @@ public class AdminManagementServiceImpl implements AdminManagementService {
 
     @Override
     @Transactional
-    public AdminDetailDto createAdmin(CreateAdminRequest req, AdminPrincipal actor) {
+    public CreateAdminResponse createAdmin(CreateAdminRequest req, AdminPrincipal actor) {
         if (adminRepository.existsByUsername(req.username())) {
             throw new BusinessException("Username '" + req.username() + "' is already taken");
         }
@@ -59,9 +59,8 @@ public class AdminManagementServiceImpl implements AdminManagementService {
         // Tier Guardrail enforcement
         enforceTierGuardrail(actor, targetRole.getTier(), "create");
 
-        String rawPassword = (req.initialPassword() != null && !req.initialPassword().isBlank())
-                ? req.initialPassword()
-                : generateSecureInitialPassword();
+        // Always auto-generate a secure random password
+        String rawPassword = generateSecureInitialPassword();
 
         String adminId = UUID.randomUUID().toString();
         Admin admin = Admin.builder()
@@ -94,7 +93,11 @@ public class AdminManagementServiceImpl implements AdminManagementService {
                 null, null, null
         );
 
-        return getAdminDetail(admin.getId());
+        AdminDetailDto detail = getAdminDetail(admin.getId());
+        return CreateAdminResponse.builder()
+                .temporaryPassword(rawPassword)
+                .adminDetail(detail)
+                .build();
     }
 
     @Override

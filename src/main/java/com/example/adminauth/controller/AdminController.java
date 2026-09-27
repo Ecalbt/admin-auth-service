@@ -30,10 +30,10 @@ public class AdminController {
     private final AdminManagementService adminManagementService;
     private final SessionManagementService sessionManagementService;
 
-    @Operation(summary = "Create new admin account with initial role and optional custom grants")
+    @Operation(summary = "Create new admin account with initial role and optional custom grants. Password is auto-generated.")
     @PreAuthorize("@authz.hasPerm('admin:create')")
     @PostMapping
-    public ApiResponse<AdminDetailDto> createAdmin(
+    public ApiResponse<CreateAdminResponse> createAdmin(
             @Valid @RequestBody CreateAdminRequest req,
             @AuthenticationPrincipal AdminPrincipal principal) {
         return ApiResponse.ok("Admin created successfully", adminManagementService.createAdmin(req, principal));

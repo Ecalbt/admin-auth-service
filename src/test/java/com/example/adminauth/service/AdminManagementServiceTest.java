@@ -65,7 +65,7 @@ class AdminManagementServiceTest {
                 .build();
 
         CreateAdminRequest req = new CreateAdminRequest(
-                "new_super", "super2@ocb.com.vn", "Super Two", "Password@123456", "SUPERADMIN", null
+                "new_super", "super2@ocb.com.vn", "Super Two", "SUPERADMIN", null
         );
 
         when(adminRepository.existsByUsername("new_super")).thenReturn(false);
@@ -89,7 +89,7 @@ class AdminManagementServiceTest {
                 .build();
 
         CreateAdminRequest req = new CreateAdminRequest(
-                "new_service_admin", "svc@ocb.com.vn", "Service Admin", "Password@123456", "SERVICE_ADMIN", null
+                "new_service_admin", "svc@ocb.com.vn", "Service Admin", "SERVICE_ADMIN", null
         );
 
         Role serviceRole = Role.builder().code("SERVICE_ADMIN").tier(3).presetPermissions(List.of()).build();
@@ -106,9 +106,10 @@ class AdminManagementServiceTest {
                 com.example.adminauth.dto.admin.AdminDetailDto.builder().id("new-id").username("new_service_admin").build()
         );
 
-        var detail = adminManagementService.createAdmin(req, superActor);
-        assertThat(detail).isNotNull();
-        assertThat(detail.username()).isEqualTo("new_service_admin");
+        var response = adminManagementService.createAdmin(req, superActor);
+        assertThat(response).isNotNull();
+        assertThat(response.temporaryPassword()).isNotBlank();
+        assertThat(response.adminDetail().username()).isEqualTo("new_service_admin");
         verify(adminRoleRepository).save(any());
     }
 
