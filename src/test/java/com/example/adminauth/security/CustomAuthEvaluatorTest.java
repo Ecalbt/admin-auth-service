@@ -87,4 +87,45 @@ class CustomAuthEvaluatorTest {
         assertThat(evaluator.isNotCreator("adm-checker-01")).isFalse();
         assertThat(evaluator.isNotCreator("checker_user")).isFalse();
     }
+
+    @Test
+    @DisplayName("J-06: Wildcard scope '*' matches any service and perm check is case-insensitive")
+    void testWildcardScopeAndCaseInsensitivity() {
+        AdminPrincipal principal = AdminPrincipal.builder()
+                .id("adm-ops")
+                .username("ops_user")
+                .roles(List.of("OPERATIONS_ADMIN"))
+                .permissions(List.of(
+                        new GrantDto("admin:create", List.of("*")),
+                        new GrantDto("CONFIG:READ", List.of("payment-service"))
+                ))
+                .build();
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities())
+        );
+
+        // Wildcard scope matches any target
+        assertThat(evaluator.hasPerm("admin:create", "any-service-target")).isTrue();
+        // Case-insensitive match on perm name
+        assertThat(evaluator.hasPerm("config:read", "payment-service")).isTrue();
+        assertThat(evaluator.hasPerm("CONFIG:READ", "payment-service")).isTrue();
+    }
+
+    @Test
+    @DisplayName("J-06: Wildcard permission '*' matches any required permission")
+    void testWildcardPermGrant() {
+        AdminPrincipal principal = AdminPrincipal.builder()
+                .id("adm-all")
+                .username("all_perm_user")
+                .roles(List.of("CUSTOM_ROLE"))
+                .permissions(List.of(new GrantDto("*", List.of("*"))))
+                .build();
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities())
+        );
+
+        assertThat(evaluator.hasPerm("whatever:perm", "whatever:scope")).isTrue();
+    }
 }

@@ -67,6 +67,12 @@ public class GlobalExceptionHandler {
                 .body(buildError(HttpStatus.FORBIDDEN, "Access denied: " + ex.getMessage(), null));
     }
 
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMethodNotSupported(org.springframework.web.HttpRequestMethodNotSupportedException ex) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(buildError(HttpStatus.METHOD_NOT_ALLOWED, ex.getMessage(), null));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneral(Exception ex) {
         log.error("Unhandled exception occurred", ex);

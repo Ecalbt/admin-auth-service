@@ -9,6 +9,13 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.JWSSigner;
+import com.nimbusds.jose.crypto.RSASSASigner;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+import java.util.Date;
 
 class JwtTokenProviderTest {
 
@@ -75,5 +82,62 @@ class JwtTokenProviderTest {
         );
 
         assertThat(tokenProvider.extractSessionId(token)).isEqualTo("session-xyz-999");
+    }
+
+    @Test
+    @DisplayName("J-02: Tampered token returns false on validateToken")
+    void testTamperedTokenFails() {
+        String token = tokenProvider.generateAccessToken(
+                "adm-1", "user1", "user1@ocb.com.vn", "sess-1", List.of(), List.of(), false
+        );
+        String tampered = token.substring(0, token.length() - 2) + (token.endsWith("a") ? "b" : "a");
+        assertThat(tokenProvider.validateToken(tampered)).isFalse();
+    }
+
+    @Test
+    @DisplayName("J-03 & BND-01: Expired token returns false on validateToken")
+    void testExpiredTokenFails() throws Exception {
+        JWSSigner signer = new RSASSASigner(keyPairManager.getPrivateKey());
+        JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(keyPairManager.getKeyId()).build();
+        Date pastExp = new Date(System.currentTimeMillis() - 2000);
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .subject("adm-expired")
+                .expirationTime(pastExp)
+                .build();
+        SignedJWT jwt = new SignedJWT(header, claims);
+        jwt.sign(signer);
+
+        assertThat(tokenProvider.validateToken(jwt.serialize())).isFalse();
+    }
+
+    @Test
+    @DisplayName("SEC-10: Token with alg:none or alg:HS256 is rejected")
+    void testAlgManipulationRejected() {
+        String noneHeader = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString("{\"alg\":\"none\"}".getBytes());
+        String payload = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString("{\"sub\":\"adm-hacker\"}".getBytes());
+        String noneToken = noneHeader + "." + payload + ".";
+
+        assertThat(tokenProvider.validateToken(noneToken)).isFalse();
+
+        String hsHeader = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString("{\"alg\":\"HS256\"}".getBytes());
+        String hsToken = hsHeader + "." + payload + ".dGVzdA";
+
+        assertThat(tokenProvider.validateToken(hsToken)).isFalse();
+    }
+
+    @Test
+    @DisplayName("BND-01: Token 5 seconds before expiration is valid")
+    void testTokenJustBeforeExpirationIsValid() throws Exception {
+        JWSSigner signer = new RSASSASigner(keyPairManager.getPrivateKey());
+        JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(keyPairManager.getKeyId()).build();
+        Date futureExp = new Date(System.currentTimeMillis() + 5000);
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .subject("adm-valid")
+                .expirationTime(futureExp)
+                .build();
+        SignedJWT jwt = new SignedJWT(header, claims);
+        jwt.sign(signer);
+
+        assertThat(tokenProvider.validateToken(jwt.serialize())).isTrue();
     }
 }

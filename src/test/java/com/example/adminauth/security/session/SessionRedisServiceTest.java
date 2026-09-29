@@ -6,6 +6,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -85,5 +86,33 @@ class SessionRedisServiceTest {
         assertThat(sessionService.isValidSession(s1.sessionId())).isFalse();
         assertThat(sessionService.isValidSession(s2.sessionId())).isFalse();
         assertThat(sessionService.getSessionsForAdmin("adm-4")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("S-01: Session full lifecycle (create -> valid -> touch -> revoke -> invalid)")
+    void testSessionFullLifecycle() {
+        AdminSessionDto s = sessionService.createSession("adm-life", "life_user", "1.2.3.4", "LifeAgent");
+        assertThat(sessionService.isValidSession(s.sessionId())).isTrue();
+
+        Instant firstUsed = s.lastUsedAt();
+        sessionService.touchSession(s.sessionId());
+        AdminSessionDto touched = sessionService.getSession(s.sessionId());
+        assertThat(touched.lastUsedAt()).isAfterOrEqualTo(firstUsed);
+
+        sessionService.revokeSession(s.sessionId());
+        assertThat(sessionService.isValidSession(s.sessionId())).isFalse();
+    }
+
+    @Test
+    @DisplayName("BND-03: Session idle timeout boundary - expired session is invalid and evicted")
+    void testSessionIdleTimeoutBoundary() {
+        AdminSessionDto expired = new AdminSessionDto(
+                "sess-exp-bound", "adm-bound", "user_bound", "127.0.0.1", "Agent",
+                Instant.now().minusSeconds(3600), Instant.now().minusSeconds(1801), Instant.now().minusSeconds(1)
+        );
+        ReflectionTestUtils.invokeMethod(sessionService, "saveSession", expired);
+
+        assertThat(sessionService.isValidSession("sess-exp-bound")).isFalse();
+        assertThat(sessionService.getSession("sess-exp-bound")).isNull();
     }
 }

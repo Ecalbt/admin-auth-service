@@ -1,6 +1,11 @@
 package com.example.adminauth.service.impl;
 
 import com.example.adminauth.dto.session.AdminSessionDto;
+import com.example.adminauth.entity.Admin;
+import com.example.adminauth.entity.AdminRole;
+import com.example.adminauth.exception.ResourceNotFoundException;
+import com.example.adminauth.repository.AdminRepository;
+import com.example.adminauth.repository.AdminRoleRepository;
 import com.example.adminauth.repository.RefreshTokenRepository;
 import com.example.adminauth.security.AdminPrincipal;
 import com.example.adminauth.security.session.SessionRedisService;
@@ -23,6 +28,8 @@ public class SessionManagementServiceImpl implements SessionManagementService {
     private final SessionRedisService sessionRedisService;
     private final RefreshTokenRepository refreshTokenRepository;
     private final AuditService auditService;
+    private final AdminRepository adminRepository;
+    private final AdminRoleRepository adminRoleRepository;
 
     @Override
     public List<AdminSessionDto> getMySessions(AdminPrincipal actor) {
@@ -32,7 +39,7 @@ public class SessionManagementServiceImpl implements SessionManagementService {
     @Override
     public List<AdminSessionDto> getAdminSessions(String adminId, AdminPrincipal actor) {
         if (!adminId.equals(actor.getId())) {
-            enforceSessionPermission(actor, "session:read_any");
+            enforceSessionPermission(actor, adminId, "session:read_any");
         }
         return sessionRedisService.getSessionsForAdmin(adminId);
     }
@@ -41,7 +48,7 @@ public class SessionManagementServiceImpl implements SessionManagementService {
     @Transactional
     public void revokeSession(String adminId, String sessionId, AdminPrincipal actor) {
         if (!adminId.equals(actor.getId())) {
-            enforceSessionPermission(actor, "session:revoke_any");
+            enforceSessionPermission(actor, adminId, "session:revoke_any");
         }
 
         sessionRedisService.revokeSession(sessionId);
@@ -58,7 +65,7 @@ public class SessionManagementServiceImpl implements SessionManagementService {
     @Transactional
     public void revokeAllSessions(String adminId, AdminPrincipal actor) {
         if (!adminId.equals(actor.getId())) {
-            enforceSessionPermission(actor, "session:revoke_any");
+            enforceSessionPermission(actor, adminId, "session:revoke_any");
         }
 
         sessionRedisService.revokeAllSessionsForAdmin(adminId);
@@ -71,15 +78,39 @@ public class SessionManagementServiceImpl implements SessionManagementService {
         log.info("All sessions for admin '{}' revoked by '{}'", adminId, actor.getUsername());
     }
 
-    private void enforceSessionPermission(AdminPrincipal actor, String requiredPerm) {
+    private void enforceSessionPermission(AdminPrincipal actor, String targetAdminId, String requiredPerm) {
         if (actor.getRoles() != null && actor.getRoles().contains("SUPERADMIN")) {
             return;
         }
+
         boolean hasPerm = actor.getPermissions() != null && actor.getPermissions().stream()
                 .anyMatch(g -> "*".equals(g.perm()) || g.perm().equalsIgnoreCase(requiredPerm));
 
         if (!hasPerm) {
             throw new AccessDeniedException("Insufficient permission: " + requiredPerm + " required");
         }
+
+        // Tier Guardrail: Check target admin tier
+        Admin targetAdmin = adminRepository.findById(targetAdminId)
+                .orElseThrow(() -> new ResourceNotFoundException("Admin not found with id: " + targetAdminId));
+
+        int targetTier = getHighestTier(targetAdmin);
+
+        if (actor.getRoles() != null && actor.getRoles().contains("OPERATIONS_ADMIN")) {
+            if (targetTier <= 2) {
+                throw new AccessDeniedException("OPERATIONS_ADMIN is not authorized to manage sessions for tier " + targetTier + " accounts");
+            }
+            return;
+        }
+
+        throw new AccessDeniedException("You do not have permission to manage sessions for this account");
+    }
+
+    private int getHighestTier(Admin admin) {
+        List<AdminRole> roles = adminRoleRepository.findByAdminId(admin.getId());
+        return roles.stream()
+                .mapToInt(ar -> ar.getRole().getTier())
+                .min()
+                .orElse(99);
     }
 }

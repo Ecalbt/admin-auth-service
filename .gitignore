@@ -13,3 +13,6 @@ Thumbs.db
 Account Service BRD.md
 PLAN.md
 TEST_SCENARIOS.md
+keys/
+*.der
+*.pem

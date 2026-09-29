@@ -300,4 +300,71 @@ public class SessionRedisService {
         }
         fallbackSessionStore.remove(key);
     }
+
+    public void saveMfaChallengeToken(String adminId, String token, Duration ttl) {
+        String key = "mfa_challenge:" + adminId;
+        if (redisTemplate != null) {
+            try {
+                redisTemplate.opsForValue().set(key, token, ttl);
+                return;
+            } catch (Exception e) {
+                log.warn("Redis save MFA challenge token failed: {}", e.getMessage());
+            }
+        }
+        fallbackSessionStore.put(key, new AdminSessionDto(token, adminId, null, null, null, Instant.now(), Instant.now(), Instant.now().plus(ttl)));
+    }
+
+    public boolean validateMfaChallengeToken(String adminId, String token) {
+        if (adminId == null || token == null) return false;
+        String key = "mfa_challenge:" + adminId;
+        if (redisTemplate != null) {
+            try {
+                String stored = redisTemplate.opsForValue().get(key);
+                return token.equals(stored);
+            } catch (Exception e) {
+                log.warn("Redis validate MFA challenge token failed: {}", e.getMessage());
+            }
+        }
+        AdminSessionDto dto = fallbackSessionStore.get(key);
+        return dto != null && token.equals(dto.sessionId()) && Instant.now().isBefore(dto.expiresAt());
+    }
+
+    public void removeMfaChallengeToken(String adminId) {
+        String key = "mfa_challenge:" + adminId;
+        if (redisTemplate != null) {
+            try {
+                redisTemplate.delete(key);
+            } catch (Exception e) {
+                log.warn("Redis delete MFA challenge token failed: {}", e.getMessage());
+            }
+        }
+        fallbackSessionStore.remove(key);
+    }
+
+    public boolean isTotpCodeUsed(String adminId, int code) {
+        String key = "used_totp:" + adminId + ":" + code;
+        if (redisTemplate != null) {
+            try {
+                Boolean hasKey = redisTemplate.hasKey(key);
+                return Boolean.TRUE.equals(hasKey);
+            } catch (Exception e) {
+                log.warn("Redis check used totp failed: {}", e.getMessage());
+            }
+        }
+        AdminSessionDto dto = fallbackSessionStore.get(key);
+        return dto != null && Instant.now().isBefore(dto.expiresAt());
+    }
+
+    public void markTotpCodeUsed(String adminId, int code, Duration ttl) {
+        String key = "used_totp:" + adminId + ":" + code;
+        if (redisTemplate != null) {
+            try {
+                redisTemplate.opsForValue().set(key, "1", ttl);
+                return;
+            } catch (Exception e) {
+                log.warn("Redis save used totp failed: {}", e.getMessage());
+            }
+        }
+        fallbackSessionStore.put(key, new AdminSessionDto("1", adminId, null, null, null, Instant.now(), Instant.now(), Instant.now().plus(ttl)));
+    }
 }

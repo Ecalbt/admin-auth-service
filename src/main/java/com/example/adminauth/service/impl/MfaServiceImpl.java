@@ -35,6 +35,7 @@ public class MfaServiceImpl implements MfaService {
     private final BackupCodeRepository backupCodeRepository;
     private final AdminRepository adminRepository;
     private final JwtTokenProvider jwtTokenProvider;
+    private final com.example.adminauth.security.session.SessionRedisService sessionRedisService;
 
     @Value("${app.mfa.issuer:OCB-AutoEarning-Admin}")
     private String issuer;
@@ -84,6 +85,11 @@ public class MfaServiceImpl implements MfaService {
     @Override
     @Transactional(readOnly = true)
     public boolean verifyTotp(String adminId, int code) {
+        if (sessionRedisService.isTotpCodeUsed(adminId, code)) {
+            log.warn("TOTP REPLAY DETECTED for adminId: {} with code: {}", adminId, code);
+            return false;
+        }
+
         TotpSecret totpSecret = totpSecretRepository.findByAdminId(adminId)
                 .filter(TotpSecret::getIsConfirmed)
                 .orElse(null);
@@ -92,7 +98,11 @@ public class MfaServiceImpl implements MfaService {
             return false;
         }
 
-        return gAuth.authorize(totpSecret.getSecret(), code);
+        boolean valid = gAuth.authorize(totpSecret.getSecret(), code);
+        if (valid) {
+            sessionRedisService.markTotpCodeUsed(adminId, code, java.time.Duration.ofSeconds(90));
+        }
+        return valid;
     }
 
     @Override

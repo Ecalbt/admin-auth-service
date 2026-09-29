@@ -118,12 +118,12 @@ public class AuthServiceImpl implements AuthService {
         }
 
         if (mfaService.isMfaConfigured(admin.getId())) {
-            String mfaToken = jwtTokenProvider.generateSecureRandomToken();
-            sessionRedisService.createSession("mfa:" + admin.getId(), admin.getUsername(), ipAddress, userAgent);
+            String rawMfaToken = jwtTokenProvider.generateSecureRandomToken();
+            sessionRedisService.saveMfaChallengeToken(admin.getId(), rawMfaToken, Duration.ofMinutes(5));
 
             return LoginResponse.builder()
                     .mfaRequired(true)
-                    .mfaToken(mfaToken + ":" + admin.getId())
+                    .mfaToken(rawMfaToken + ":" + admin.getId())
                     .username(admin.getUsername())
                     .fullName(admin.getFullName())
                     .build();
@@ -228,11 +228,19 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public LoginResponse verifyMfa(MfaVerifyRequest req, String ipAddress, String userAgent) {
+        if (req.mfaToken() == null || !req.mfaToken().contains(":")) {
+            throw new BadCredentialsException("Invalid MFA token format");
+        }
         String[] parts = req.mfaToken().split(":");
         if (parts.length < 2) {
             throw new BadCredentialsException("Invalid MFA token format");
         }
+        String rawToken = parts[0];
         String adminId = parts[1];
+
+        if (!sessionRedisService.validateMfaChallengeToken(adminId, rawToken)) {
+            throw new BadCredentialsException("MFA session is invalid or has expired");
+        }
 
         Admin admin = adminRepository.findById(adminId)
                 .orElseThrow(() -> new BadCredentialsException("Invalid MFA session"));
@@ -254,6 +262,8 @@ public class AuthServiceImpl implements AuthService {
                     null, "MFA code verification failed", ipAddress, userAgent, null);
             throw new BadCredentialsException("Invalid MFA code");
         }
+
+        sessionRedisService.removeMfaChallengeToken(adminId);
 
         auditService.recordEvent(admin.getUsername(), "MFA_VERIFIED", admin.getId(),
                 null, "MFA verified successfully", ipAddress, userAgent, null);

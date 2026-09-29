@@ -7,15 +7,19 @@ import com.example.adminauth.repository.AuditEventRepository;
 import com.example.adminauth.service.AuditService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -58,26 +62,35 @@ public class AuditServiceImpl implements AuditService {
             auditEventRepository.save(event);
             log.info("AUDIT_LOG: actor='{}', action='{}', target='{}'", actorId, action, targetId);
         } catch (JsonProcessingException e) {
-            log.error("Failed to serialize audit event state", e);
+            log.error("[AUDIT_SERIALIZATION_ERROR] Failed to serialize audit event state for actor='{}', action='{}': {}",
+                    actorId, action, e.getMessage(), e);
         } catch (Exception e) {
-            log.error("Failed to persist audit event", e);
+            log.error("[CRITICAL_SECURITY_ALERT] FAILED TO PERSIST AUDIT LOG! actor='{}', action='{}', target='{}': {}",
+                    actorId, action, targetId, e.getMessage(), e);
         }
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<AuditEventDto> getAuditLogs(String actorId, String action, LocalDateTime start, LocalDateTime end, Pageable pageable) {
-        Page<AuditEvent> page;
-        if (actorId != null && !actorId.isBlank()) {
-            page = auditEventRepository.findByActorIdOrderByCreatedAtDesc(actorId, pageable);
-        } else if (action != null && !action.isBlank()) {
-            page = auditEventRepository.findByActionOrderByCreatedAtDesc(action, pageable);
-        } else if (start != null && end != null) {
-            page = auditEventRepository.findByCreatedAtBetweenOrderByCreatedAtDesc(start, end, pageable);
-        } else {
-            page = auditEventRepository.findAll(pageable);
-        }
+        Specification<AuditEvent> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            if (actorId != null && !actorId.isBlank()) {
+                predicates.add(cb.equal(root.get("actorId"), actorId.trim()));
+            }
+            if (action != null && !action.isBlank()) {
+                predicates.add(cb.equal(root.get("action"), action.trim()));
+            }
+            if (start != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), start));
+            }
+            if (end != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get("createdAt"), end));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
 
+        Page<AuditEvent> page = auditEventRepository.findAll(spec, pageable);
         return page.map(auditMapper::toDto);
     }
 }
