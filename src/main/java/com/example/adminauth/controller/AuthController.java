@@ -1,12 +1,7 @@
 package com.example.adminauth.controller;
 
 import com.example.adminauth.common.ApiResponse;
-import com.example.adminauth.dto.auth.CompleteOnboardingRequest;
-import com.example.adminauth.dto.auth.LoginRequest;
-import com.example.adminauth.dto.auth.LoginResponse;
-import com.example.adminauth.dto.auth.MfaVerifyRequest;
-import com.example.adminauth.dto.auth.OnboardingMfaSetupRequest;
-import com.example.adminauth.dto.auth.RefreshTokenRequest;
+import com.example.adminauth.dto.auth.*;
 import com.example.adminauth.dto.mfa.TotpSetupResponse;
 import com.example.adminauth.security.AdminPrincipal;
 import com.example.adminauth.service.AuthService;
@@ -75,6 +70,25 @@ public class AuthController {
             authService.logout(principal.getSessionId(), principal);
         }
         return ApiResponse.ok("Logged out successfully");
+    }
+
+    @Operation(summary = "Forgot Password Step 1: Request password reset via TOTP verification")
+    @PostMapping("/password/forgot")
+    public ApiResponse<ForgotPasswordResponse> forgotPassword(
+            @Valid @RequestBody ForgotPasswordRequest req, HttpServletRequest request) {
+        String ip = extractClientIp(request);
+        String userAgent = request.getHeader("User-Agent");
+        return ApiResponse.ok("Reset token issued", authService.forgotPassword(req, ip, userAgent));
+    }
+
+    @Operation(summary = "Forgot Password Step 2: Submit reset token, TOTP code, and new password")
+    @PostMapping("/password/reset")
+    public ApiResponse<Void> resetPassword(
+            @Valid @RequestBody ResetPasswordRequest req, HttpServletRequest request) {
+        String ip = extractClientIp(request);
+        String userAgent = request.getHeader("User-Agent");
+        authService.resetPassword(req, ip, userAgent);
+        return ApiResponse.ok("Password reset successfully. Please login with your new password.");
     }
 
     private String extractClientIp(HttpServletRequest request) {

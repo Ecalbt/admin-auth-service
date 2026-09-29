@@ -260,4 +260,44 @@ public class SessionRedisService {
         }
         fallbackSessionStore.remove(key);
     }
+
+    public void savePasswordResetToken(String adminId, String token, Duration ttl) {
+        String key = "pwd_reset:" + adminId;
+        if (redisTemplate != null) {
+            try {
+                redisTemplate.opsForValue().set(key, token, ttl);
+                return;
+            } catch (Exception e) {
+                log.warn("Redis save password reset token failed: {}", e.getMessage());
+            }
+        }
+        fallbackSessionStore.put(key, new AdminSessionDto(token, adminId, null, null, null, Instant.now(), Instant.now(), Instant.now().plus(ttl)));
+    }
+
+    public boolean validatePasswordResetToken(String adminId, String token) {
+        if (adminId == null || token == null) return false;
+        String key = "pwd_reset:" + adminId;
+        if (redisTemplate != null) {
+            try {
+                String stored = redisTemplate.opsForValue().get(key);
+                return token.equals(stored);
+            } catch (Exception e) {
+                log.warn("Redis validate password reset token failed: {}", e.getMessage());
+            }
+        }
+        AdminSessionDto dto = fallbackSessionStore.get(key);
+        return dto != null && token.equals(dto.sessionId()) && Instant.now().isBefore(dto.expiresAt());
+    }
+
+    public void removePasswordResetToken(String adminId) {
+        String key = "pwd_reset:" + adminId;
+        if (redisTemplate != null) {
+            try {
+                redisTemplate.delete(key);
+            } catch (Exception e) {
+                log.warn("Redis delete password reset token failed: {}", e.getMessage());
+            }
+        }
+        fallbackSessionStore.remove(key);
+    }
 }

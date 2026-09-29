@@ -1,11 +1,6 @@
 package com.example.adminauth.service;
 
-import com.example.adminauth.dto.auth.ChangePasswordRequest;
-import com.example.adminauth.dto.auth.CompleteOnboardingRequest;
-import com.example.adminauth.dto.auth.LoginRequest;
-import com.example.adminauth.dto.auth.LoginResponse;
-import com.example.adminauth.dto.auth.MfaVerifyRequest;
-import com.example.adminauth.dto.auth.RefreshTokenRequest;
+import com.example.adminauth.dto.auth.*;
 import com.example.adminauth.dto.mfa.TotpSetupResponse;
 import com.example.adminauth.security.AdminPrincipal;
 
@@ -27,4 +22,8 @@ public interface AuthService {
     void logout(String sessionId, AdminPrincipal actor);
 
     void changePassword(AdminPrincipal actor, ChangePasswordRequest req);
+
+    ForgotPasswordResponse forgotPassword(ForgotPasswordRequest req, String ipAddress, String userAgent);
+
+    void resetPassword(ResetPasswordRequest req, String ipAddress, String userAgent);
 }

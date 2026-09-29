@@ -384,6 +384,123 @@ public class AuthServiceImpl implements AuthService {
         auditService.recordEvent(admin.getUsername(), "PASSWORD_CHANGED", admin.getId(), null, "Password changed successfully", null, null, null);
     }
 
+    @Override
+    @Transactional
+    public ForgotPasswordResponse forgotPassword(ForgotPasswordRequest req, String ipAddress, String userAgent) {
+        Admin admin = adminRepository.findByUsername(req.username())
+                .orElseThrow(() -> new ResourceNotFoundException("Admin not found with username: " + req.username()));
+
+        if (admin.getStatus() == AdminStatus.DISABLED) {
+            throw new DisabledException("Account has been disabled by administrator");
+        }
+
+        if (!mfaService.isMfaConfigured(admin.getId())) {
+            throw new BusinessException("MFA is not configured for this account. Please contact an administrator to reset your password.");
+        }
+
+        String rawToken = jwtTokenProvider.generateSecureRandomToken();
+        String fullResetToken = rawToken + ":" + admin.getId();
+
+        sessionRedisService.savePasswordResetToken(admin.getId(), rawToken, Duration.ofMinutes(10));
+
+        auditService.recordEvent(admin.getUsername(), "PASSWORD_FORGOT_REQUESTED", admin.getId(),
+                null, "Password reset initiated via TOTP", ipAddress, userAgent, null);
+
+        return new ForgotPasswordResponse(
+                fullResetToken,
+                "TOTP",
+                "Please submit the 6-digit TOTP code from your authenticator app along with your new password to complete the reset process."
+        );
+    }
+
+    @Override
+    @Transactional
+    public void resetPassword(ResetPasswordRequest req, String ipAddress, String userAgent) {
+        if (req.resetToken() == null || !req.resetToken().contains(":")) {
+            throw new BadCredentialsException("Invalid password reset token format");
+        }
+        String[] parts = req.resetToken().split(":");
+        if (parts.length < 2) {
+            throw new BadCredentialsException("Invalid password reset token format");
+        }
+        String rawToken = parts[0];
+        String adminId = parts[1];
+
+        if (!sessionRedisService.validatePasswordResetToken(adminId, rawToken)) {
+            throw new BadCredentialsException("Password reset token is invalid or has expired");
+        }
+
+        Admin admin = adminRepository.findById(adminId)
+                .orElseThrow(() -> new BadCredentialsException("Invalid password reset session"));
+
+        if (admin.getStatus() == AdminStatus.DISABLED) {
+            throw new DisabledException("Account has been disabled by administrator");
+        }
+
+        // 1. Verify TOTP or backup code
+        boolean verified = false;
+        if (req.totpCode() != null && !req.totpCode().isBlank()) {
+            try {
+                int code = Integer.parseInt(req.totpCode().trim());
+                verified = mfaService.verifyTotp(adminId, code);
+            } catch (NumberFormatException ignored) {}
+        }
+        if (!verified && req.backupCode() != null && !req.backupCode().isBlank()) {
+            verified = mfaService.verifyBackupCode(adminId, req.backupCode().trim());
+        }
+
+        if (!verified) {
+            auditService.recordEvent(admin.getUsername(), "PASSWORD_RESET_FAILED", admin.getId(),
+                    null, "MFA code verification failed during password reset", ipAddress, userAgent, null);
+            throw new BadCredentialsException("Invalid MFA verification code");
+        }
+
+        // 2. Validate new password pattern
+        if (req.newPassword() == null || !PASSWORD_PATTERN.matcher(req.newPassword()).matches()) {
+            throw new BusinessException("Password must be at least 12 characters and contain uppercase, lowercase, digit, and special character (@$!%*?&)");
+        }
+
+        // 3. Check against current password
+        if (passwordEncoder.matches(req.newPassword(), admin.getPasswordHash())) {
+            throw new BusinessException("New password cannot be the same as the current password");
+        }
+
+        // 4. Check against password history
+        for (PasswordHistory ph : passwordHistoryRepository.findRecentHistory(admin.getId(), PageRequest.of(0, 5))) {
+            if (passwordEncoder.matches(req.newPassword(), ph.getPasswordHash())) {
+                throw new BusinessException("Password has been used recently. Please choose a different password.");
+            }
+        }
+
+        // 5. Update password
+        String newHash = passwordEncoder.encode(req.newPassword());
+        admin.setPasswordHash(newHash);
+        if (admin.getStatus() == AdminStatus.LOCKED) {
+            admin.setStatus(AdminStatus.ACTIVE);
+        }
+        admin.setFailedLoginAttempts(0);
+        admin.setLockedUntil(null);
+        admin.setMustChangePassword(false);
+        admin.setUpdatedBy(admin.getUsername());
+        adminRepository.save(admin);
+
+        PasswordHistory history = PasswordHistory.builder()
+                .admin(admin)
+                .passwordHash(newHash)
+                .build();
+        passwordHistoryRepository.save(history);
+
+        // 6. Revoke all sessions & refresh tokens
+        sessionRedisService.revokeAllSessionsForAdmin(adminId);
+        refreshTokenRepository.revokeAllForAdmin(adminId, LocalDateTime.now());
+
+        // 7. Remove reset token
+        sessionRedisService.removePasswordResetToken(adminId);
+
+        auditService.recordEvent(admin.getUsername(), "PASSWORD_RESET_SELF", admin.getId(),
+                null, "Password reset successfully via TOTP self-service", ipAddress, userAgent, null);
+    }
+
     private LoginResponse issueTokens(Admin admin, boolean mfaVerified, String ipAddress, String userAgent) {
         var session = sessionRedisService.createSession(admin.getId(), admin.getUsername(), ipAddress, userAgent);
 

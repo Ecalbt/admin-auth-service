@@ -268,4 +268,103 @@ class AuthServiceTest {
         verify(sessionRedisService).removeOnboardingToken("adm-pending");
         verify(passwordHistoryRepository).save(any(com.example.adminauth.entity.PasswordHistory.class));
     }
+
+    @Test
+    @DisplayName("Forgot password issues reset token for account with configured MFA")
+    void testForgotPasswordSuccess() {
+        Admin admin = Admin.builder()
+                .id("adm-fp")
+                .username("forgot_user")
+                .status(AdminStatus.ACTIVE)
+                .build();
+
+        when(adminRepository.findByUsername("forgot_user")).thenReturn(Optional.of(admin));
+        when(mfaService.isMfaConfigured("adm-fp")).thenReturn(true);
+        when(jwtTokenProvider.generateSecureRandomToken()).thenReturn("raw-reset-token");
+
+        com.example.adminauth.dto.auth.ForgotPasswordResponse resp = authService.forgotPassword(
+                new com.example.adminauth.dto.auth.ForgotPasswordRequest("forgot_user"), "127.0.0.1", "Agent"
+        );
+
+        assertThat(resp).isNotNull();
+        assertThat(resp.resetToken()).isEqualTo("raw-reset-token:adm-fp");
+        assertThat(resp.method()).isEqualTo("TOTP");
+        verify(sessionRedisService).savePasswordResetToken(eq("adm-fp"), eq("raw-reset-token"), any());
+    }
+
+    @Test
+    @DisplayName("Forgot password throws exception when account has no MFA configured")
+    void testForgotPasswordFailsWhenMfaNotConfigured() {
+        Admin admin = Admin.builder()
+                .id("adm-no-mfa")
+                .username("no_mfa_user")
+                .status(AdminStatus.ACTIVE)
+                .build();
+
+        when(adminRepository.findByUsername("no_mfa_user")).thenReturn(Optional.of(admin));
+        when(mfaService.isMfaConfigured("adm-no-mfa")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.forgotPassword(
+                new com.example.adminauth.dto.auth.ForgotPasswordRequest("no_mfa_user"), "127.0.0.1", "Agent"))
+                .isInstanceOf(com.example.adminauth.exception.BusinessException.class)
+                .hasMessageContaining("MFA is not configured");
+    }
+
+    @Test
+    @DisplayName("Reset password with valid TOTP code updates password and revokes all sessions")
+    void testResetPasswordSuccessWithTotp() {
+        Admin admin = Admin.builder()
+                .id("adm-reset")
+                .username("reset_user")
+                .passwordHash("old_hash")
+                .status(AdminStatus.LOCKED)
+                .failedLoginAttempts(5)
+                .mustChangePassword(true)
+                .build();
+
+        when(sessionRedisService.validatePasswordResetToken("adm-reset", "reset-token")).thenReturn(true);
+        when(adminRepository.findById("adm-reset")).thenReturn(Optional.of(admin));
+        when(mfaService.verifyTotp("adm-reset", 123456)).thenReturn(true);
+        when(passwordEncoder.matches("NewSecurePass@123", "old_hash")).thenReturn(false);
+        when(passwordHistoryRepository.findRecentHistory(eq("adm-reset"), any())).thenReturn(List.of());
+        when(passwordEncoder.encode("NewSecurePass@123")).thenReturn("new_hash");
+
+        var req = new com.example.adminauth.dto.auth.ResetPasswordRequest(
+                "reset-token:adm-reset", "123456", null, "NewSecurePass@123"
+        );
+
+        authService.resetPassword(req, "127.0.0.1", "Agent");
+
+        assertThat(admin.getPasswordHash()).isEqualTo("new_hash");
+        assertThat(admin.getStatus()).isEqualTo(AdminStatus.ACTIVE);
+        assertThat(admin.getFailedLoginAttempts()).isEqualTo(0);
+        assertThat(admin.getMustChangePassword()).isFalse();
+
+        verify(sessionRedisService).revokeAllSessionsForAdmin("adm-reset");
+        verify(refreshTokenRepository).revokeAllForAdmin(eq("adm-reset"), any());
+        verify(sessionRedisService).removePasswordResetToken("adm-reset");
+        verify(passwordHistoryRepository).save(any(com.example.adminauth.entity.PasswordHistory.class));
+    }
+
+    @Test
+    @DisplayName("Reset password fails when TOTP code is invalid")
+    void testResetPasswordFailsWithInvalidTotp() {
+        Admin admin = Admin.builder()
+                .id("adm-reset")
+                .username("reset_user")
+                .status(AdminStatus.ACTIVE)
+                .build();
+
+        when(sessionRedisService.validatePasswordResetToken("adm-reset", "reset-token")).thenReturn(true);
+        when(adminRepository.findById("adm-reset")).thenReturn(Optional.of(admin));
+        when(mfaService.verifyTotp("adm-reset", 999999)).thenReturn(false);
+
+        var req = new com.example.adminauth.dto.auth.ResetPasswordRequest(
+                "reset-token:adm-reset", "999999", null, "NewSecurePass@123"
+        );
+
+        assertThatThrownBy(() -> authService.resetPassword(req, "127.0.0.1", "Agent"))
+                .isInstanceOf(BadCredentialsException.class)
+                .hasMessageContaining("Invalid MFA verification code");
+    }
 }

@@ -486,6 +486,8 @@ Flyway đã nạp sẵn **4 tài khoản** để phục vụ kiểm thử:
 | `POST` | `/v1/auth/onboarding/mfa/setup` | Onboarding: Lấy lại QR & Secret TOTP bằng onboarding token |
 | `POST` | `/v1/auth/onboarding/complete` | Onboarding: Đổi mật khẩu + xác nhận OTP 6 số $\rightarrow$ Kích hoạt tài khoản |
 | `POST` | `/v1/auth/mfa/verify` | Bước 2: Xác thực MFA (TOTP hoặc backup code) |
+| `POST` | `/v1/auth/password/forgot` | Quên mật khẩu: Yêu cầu cấp resetToken qua TOTP |
+| `POST` | `/v1/auth/password/reset` | Quên mật khẩu: Xác thực OTP 6 số (hoặc backup code) + đặt mật khẩu mới |
 | `POST` | `/v1/auth/refresh` | Rotate refresh token, cấp access token mới |
 | `POST` | `/v1/auth/logout` | Đăng xuất, thu hồi session hiện tại |
 | `GET`  | `/.well-known/jwks.json` | Public key cho các service verify JWT |
@@ -578,6 +580,43 @@ Flyway đã nạp sẵn **4 tài khoản** để phục vụ kiểm thử:
 ```json
 {
   "refreshToken": "dGhpcyBpcyBhIHJl..."
+}
+```
+
+**Body Yêu cầu Quên mật khẩu (`POST /v1/auth/password/forgot`):**
+```json
+{
+  "username": "ops_demo"
+}
+```
+
+**Response — Cấp Reset Token (`200 OK`):**
+```json
+{
+  "success": true,
+  "message": "Reset token issued",
+  "data": {
+    "resetToken": "a1b2c3d4...:adm-uuid-123",
+    "method": "TOTP",
+    "message": "Please submit the 6-digit TOTP code from your authenticator app along with your new password to complete the reset process."
+  }
+}
+```
+
+**Body Đặt lại mật khẩu bằng mã TOTP (`POST /v1/auth/password/reset`):**
+```json
+{
+  "resetToken": "a1b2c3d4...:adm-uuid-123",
+  "totpCode": "482910",
+  "newPassword": "NewSecurePassword@2026"
+}
+```
+
+**Response (`200 OK`):**
+```json
+{
+  "success": true,
+  "message": "Password reset successfully. Please login with your new password."
 }
 ```
 
