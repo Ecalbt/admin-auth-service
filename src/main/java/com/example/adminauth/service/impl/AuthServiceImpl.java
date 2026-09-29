@@ -13,6 +13,8 @@ import com.example.adminauth.security.session.SessionRedisService;
 import com.example.adminauth.service.AuditService;
 import com.example.adminauth.service.AuthService;
 import com.example.adminauth.service.MfaService;
+import com.example.adminauth.dto.mfa.BackupCodesResponse;
+import com.example.adminauth.dto.mfa.TotpSetupResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +26,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -86,6 +89,34 @@ public class AuthServiceImpl implements AuthService {
             adminRepository.save(admin);
         }
 
+        // Check if account requires mandatory first-time onboarding:
+        // Status is PENDING_ACTIVATION, OR mustChangePassword is true AND MFA is not configured
+        boolean requiresOnboarding = admin.getStatus() == AdminStatus.PENDING_ACTIVATION
+                || (Boolean.TRUE.equals(admin.getMustChangePassword()) && !mfaService.isMfaConfigured(admin.getId()));
+
+        if (requiresOnboarding) {
+            String rawToken = jwtTokenProvider.generateSecureRandomToken();
+            String fullOnboardingToken = rawToken + ":" + admin.getId();
+
+            sessionRedisService.saveOnboardingToken(admin.getId(), rawToken, Duration.ofMinutes(15));
+
+            TotpSetupResponse totpSetup = mfaService.setupTotp(admin.getId());
+
+            auditService.recordEvent(admin.getUsername(), "ONBOARDING_REQUIRED", admin.getId(),
+                    null, "Onboarding and MFA enrollment required for first login", ipAddress, userAgent, null);
+
+            return LoginResponse.builder()
+                    .mfaRequired(false)
+                    .onboardingRequired(true)
+                    .onboardingToken(fullOnboardingToken)
+                    .totpSecretKey(totpSetup.secretKey())
+                    .totpQrCodeUri(totpSetup.qrCodeDataUri())
+                    .username(admin.getUsername())
+                    .fullName(admin.getFullName())
+                    .mustChangePassword(true)
+                    .build();
+        }
+
         if (mfaService.isMfaConfigured(admin.getId())) {
             String mfaToken = jwtTokenProvider.generateSecureRandomToken();
             sessionRedisService.createSession("mfa:" + admin.getId(), admin.getUsername(), ipAddress, userAgent);
@@ -99,6 +130,99 @@ public class AuthServiceImpl implements AuthService {
         }
 
         return issueTokens(admin, false, ipAddress, userAgent);
+    }
+
+    @Override
+    @Transactional
+    public TotpSetupResponse setupOnboardingMfa(String fullOnboardingToken) {
+        String adminId = validateAndExtractOnboardingAdminId(fullOnboardingToken);
+        Admin admin = adminRepository.findById(adminId)
+                .orElseThrow(() -> new BadCredentialsException("Invalid onboarding session"));
+
+        return mfaService.setupTotp(admin.getId());
+    }
+
+    @Override
+    @Transactional
+    public LoginResponse completeOnboarding(CompleteOnboardingRequest req, String ipAddress, String userAgent) {
+        String adminId = validateAndExtractOnboardingAdminId(req.onboardingToken());
+        Admin admin = adminRepository.findById(adminId)
+                .orElseThrow(() -> new BadCredentialsException("Invalid onboarding session"));
+
+        // 1. Validate password policy
+        if (req.newPassword() == null || !PASSWORD_PATTERN.matcher(req.newPassword()).matches()) {
+            throw new BusinessException("Password must be at least 12 characters and contain uppercase, lowercase, digit, and special character (@$!%*?&)");
+        }
+
+        // 2. Cannot reuse temporary password
+        if (passwordEncoder.matches(req.newPassword(), admin.getPasswordHash())) {
+            throw new BusinessException("New password cannot be the same as the temporary password");
+        }
+
+        // 3. Password history check
+        for (PasswordHistory ph : passwordHistoryRepository.findRecentHistory(admin.getId(), PageRequest.of(0, 5))) {
+            if (passwordEncoder.matches(req.newPassword(), ph.getPasswordHash())) {
+                throw new BusinessException("Password has been used recently. Please choose a different password.");
+            }
+        }
+
+        // 4. Verify TOTP code and generate backup codes
+        BackupCodesResponse backupCodesResp = mfaService.confirmTotp(adminId, req.totpCode());
+
+        // 5. Update password & activate account
+        String newHash = passwordEncoder.encode(req.newPassword());
+        admin.setPasswordHash(newHash);
+        admin.setStatus(AdminStatus.ACTIVE);
+        admin.setMustChangePassword(false);
+        admin.setUpdatedBy(admin.getUsername());
+        adminRepository.save(admin);
+
+        PasswordHistory history = PasswordHistory.builder()
+                .admin(admin)
+                .passwordHash(newHash)
+                .build();
+        passwordHistoryRepository.save(history);
+
+        // 6. Invalidate onboarding token
+        sessionRedisService.removeOnboardingToken(adminId);
+
+        auditService.recordEvent(admin.getUsername(), "ONBOARDING_COMPLETED", admin.getId(),
+                null, "First-time password changed and MFA enabled successfully", ipAddress, userAgent, null);
+
+        // 7. Issue active tokens (mfaVerified = true)
+        LoginResponse loginResp = issueTokens(admin, true, ipAddress, userAgent);
+
+        return LoginResponse.builder()
+                .mfaRequired(false)
+                .onboardingRequired(false)
+                .accessToken(loginResp.accessToken())
+                .refreshToken(loginResp.refreshToken())
+                .expiresIn(loginResp.expiresIn())
+                .adminId(loginResp.adminId())
+                .username(loginResp.username())
+                .fullName(loginResp.fullName())
+                .mustChangePassword(false)
+                .roles(loginResp.roles())
+                .permissions(loginResp.permissions())
+                .backupCodes(backupCodesResp.backupCodes())
+                .build();
+    }
+
+    private String validateAndExtractOnboardingAdminId(String fullOnboardingToken) {
+        if (fullOnboardingToken == null || !fullOnboardingToken.contains(":")) {
+            throw new BadCredentialsException("Invalid onboarding token format");
+        }
+        String[] parts = fullOnboardingToken.split(":");
+        if (parts.length < 2) {
+            throw new BadCredentialsException("Invalid onboarding token format");
+        }
+        String rawToken = parts[0];
+        String adminId = parts[1];
+
+        if (!sessionRedisService.validateOnboardingToken(adminId, rawToken)) {
+            throw new BadCredentialsException("Onboarding token is invalid or has expired");
+        }
+        return adminId;
     }
 
     @Override

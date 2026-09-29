@@ -119,7 +119,53 @@ Flyway đã nạp sẵn **4 tài khoản** để phục vụ kiểm thử:
 
 ## 4. Luồng hoạt động của các API
 
-### 4.1. Luồng đăng nhập (Login — 2 bước với MFA)
+### 4.1. Luồng đăng nhập & Kích hoạt MFA bắt buộc (Login & Mandatory Onboarding)
+
+#### A. Luồng kích hoạt lần đầu (First-Time Login / Mandatory MFA Onboarding):
+Áp dụng cho mọi tài khoản mới tạo (trạng thái `PENDING_ACTIVATION` hoặc bắt buộc đổi mật khẩu):
+
+```
+┌──────┐        ┌──────────────────┐        ┌──────┐        ┌──────┐
+│Client│        │ AuthController   │        │  DB  │        │Redis │
+└──┬───┘        └────────┬─────────┘        └──┬───┘        └──┬───┘
+   │  POST /v1/auth/login│                     │               │
+   │  {username, tempPassword}                 │               │
+   │─────────────────────▶│                     │               │
+   │                      │  Verify temp pass   │               │
+   │                      │  Kiểm tra:          │               │
+   │                      │  PENDING_ACTIVATION?│               │
+   │                      │───────────────────▶│               │
+   │                      │  Tạo onboardingToken│               │
+   │                      │  Lưu vào Redis (15m)│               │
+   │                      │  ─────────────────────────────────▶│
+   │                      │  Khởi tạo TOTP key  │               │
+   │◀─────────────────────│                     │               │
+   │  {onboardingRequired: true,                │               │
+   │   onboardingToken, totpSecretKey,          │               │
+   │   totpQrCodeUri}                           │               │
+   │                                            │               │
+   │  (Client quét QR vào Google Authenticator) │               │
+   │                                            │               │
+   │  POST /v1/auth/onboarding/complete         │               │
+   │  {onboardingToken, newPassword, totpCode}  │               │
+   │─────────────────────▶│                                    
+   │                      │  Verify OTP code    │               │
+   │                      │  Đổi mật khẩu mới   │               │
+   │                      │  confirmed = true   │               │
+   │                      │  status = ACTIVE    │               │
+   │                      │  Sinh 10 backup code│               │
+   │                      │────────────────────▶│               
+   │                      │  Hủy onboardingToken│               │
+   │                      │  Tạo session chính  │               │
+   │                      │  ─────────────────────────────────▶ |
+   │                      │  Ký JWT (mfa_verified: true)        │
+   │◀─────────────────────│                     │               │
+   │  {accessToken, refreshToken,               │               │
+   │   roles, permissions, backupCodes: [...]}  │               │
+```
+
+#### B. Luồng đăng nhập định kỳ (Regular Login có MFA):
+Áp dụng cho các lần đăng nhập tiếp theo sau khi tài khoản đã kích hoạt:
 
 ```
 ┌──────┐        ┌──────────────────┐        ┌──────┐        ┌──────┐
@@ -128,49 +174,27 @@ Flyway đã nạp sẵn **4 tài khoản** để phục vụ kiểm thử:
    │  POST /v1/auth/login│                     │               │
    │  {username, password}                     │               │
    │─────────────────────▶│                     │               │
-   │                      │  Kiểm tra username │               │
-   │                      │───────────────────▶│               │
-   │                      │  Admin + roles +   │               │
-   │                      │  permissions       │               │
-   │                      │◀───────────────────│               │
-   │                      │                     │               │
-   │                      │  Verify BCrypt password             │
-   │                      │  Kiểm tra status (ACTIVE?)          │
-   │                      │  Kiểm tra lockout (< 5 lần sai?)   │
-   │                      │                     │               │
-   │     ┌────────────────┤                     │               │
-   │     │ MFA đã bật?    │                     │               │
-   │     └───┬────────────┘                     │               │
-   │         │                                  │               │
-   │    [CÓ MFA]                                │               │
-   │         │  Trả về {mfaRequired: true,      │               │
-   │◀────────│          mfaToken: "abc..."}     │               │
-   │         │                                  │               │
+   │                      │  Verify password    │               │
+   │                      │  Tài khoản ACTIVE,  │               │
+   │                      │  MFA đã bật         │               │
+   │◀─────────────────────│                     │               │
+   │  {mfaRequired: true, mfaToken: "..."}      │               │
+   │                                            │               │
    │  POST /v1/auth/mfa/verify                  │               │
    │  {mfaToken, totpCode}                      │               │
    │─────────────────────▶│                     │               │
    │                      │  Verify TOTP code   │               │
    │                      │  Tạo session (sid)  │               │
    │                      │  ─────────────────────────────────▶│
-   │                      │  Lưu session vào Redis             │
-   │                      │  Ký JWT RS256 (nhúng permissions)  │
-   │                      │  Lưu refresh_token hash vào DB     │
+   │                      │  Ký JWT RS256       │               │
    │◀─────────────────────│                     │               │
-   │  {accessToken, refreshToken,               │               │
-   │   roles, permissions, expiresIn}           │               │
-   │                                            │               │
-   │    [KHÔNG MFA]                             │               │
-   │         │  Tạo session → Redis             │               │
-   │         │  Ký JWT → trả token ngay         │               │
-   │◀────────│                                  │               │
+   │  {accessToken, refreshToken, roles, permissions}           │
 ```
 
-**Tóm tắt:**
-1. Client gửi `username` + `password` → API kiểm tra thông tin, trạng thái tài khoản, số lần đăng nhập sai.
-2. Nếu **MFA đã bật**: trả `mfaRequired=true` kèm `mfaToken` (TTL 5 phút) → Client gửi tiếp mã TOTP/backup code qua `/mfa/verify`.
-3. Nếu **không có MFA**: cấp token ngay.
-4. Mỗi lần đăng nhập thành công: tạo session trên Redis (`sid`), ký JWT RS256 nhúng `permissions` + `sid`.
-5. **Lockout**: Sai 5 lần liên tiếp → khóa 30 phút.
+**Tóm tắt quy tắc:**
+1. **Tài khoản mới:** Bắt buộc Onboarding liên hoàn (Đổi mật khẩu tạm + Cài đặt & Xác nhận TOTP 6 số) $\rightarrow$ Tuyệt đối không cấp Access Token nếu chưa hoàn tất MFA.
+2. **Đăng nhập định kỳ:** Luôn đi qua 2 bước (Mật khẩu $\rightarrow$ OTP 6 số).
+3. **Lockout:** Nhập sai mật khẩu 5 lần liên tiếp $\rightarrow$ Khóa tài khoản 30 phút.
 
 ---
 
@@ -458,7 +482,9 @@ Flyway đã nạp sẵn **4 tài khoản** để phục vụ kiểm thử:
 
 | Method | Endpoint | Mô tả |
 |:---:|---|---|
-| `POST` | `/v1/auth/login` | Bước 1: Đăng nhập bằng username + password |
+| `POST` | `/v1/auth/login` | Bước 1: Đăng nhập (nhận JWT, MFA challenge, hoặc Onboarding challenge) |
+| `POST` | `/v1/auth/onboarding/mfa/setup` | Onboarding: Lấy lại QR & Secret TOTP bằng onboarding token |
+| `POST` | `/v1/auth/onboarding/complete` | Onboarding: Đổi mật khẩu + xác nhận OTP 6 số $\rightarrow$ Kích hoạt tài khoản |
 | `POST` | `/v1/auth/mfa/verify` | Bước 2: Xác thực MFA (TOTP hoặc backup code) |
 | `POST` | `/v1/auth/refresh` | Rotate refresh token, cấp access token mới |
 | `POST` | `/v1/auth/logout` | Đăng xuất, thu hồi session hiện tại |
@@ -467,33 +493,68 @@ Flyway đã nạp sẵn **4 tài khoản** để phục vụ kiểm thử:
 **Body Login (`POST /v1/auth/login`):**
 ```json
 {
-  "username": "superadmin",
-  "password": "SuperAdmin@123456"
+  "username": "demo_maker",
+  "password": "TemporaryRandomPassword@123"
 }
 ```
 
-**Response — Không có MFA (200 OK):**
+**Response — Tài khoản mới cần Onboarding bắt buộc (200 OK):**
 ```json
 {
   "success": true,
   "message": "Login evaluated",
   "data": {
     "mfaRequired": false,
-    "accessToken": "eyJhbGciOiJSUzI1NiJ9...",
-    "refreshToken": "dGhpcyBpcyBhIHJl...",
-    "expiresIn": 1800,
-    "adminId": "adm-superadmin-01",
-    "username": "superadmin",
-    "fullName": "Root Super Administrator",
-    "mustChangePassword": false,
-    "roles": ["SUPERADMIN"],
-    "permissions": [{"perm": "*", "scope": ["*"]}]
-  },
-  "timestamp": "2026-09-22T09:00:00Z"
+    "onboardingRequired": true,
+    "onboardingToken": "9a8b7c6d-5e4f...:adm-uuid-123",
+    "totpSecretKey": "JBSWY3DPEHPK3PXP...",
+    "totpQrCodeUri": "otpauth://totp/OCB-AutoEarning-Admin:demo_maker?secret=JBSWY3DPEHPK3PXP...&issuer=OCB-AutoEarning-Admin",
+    "username": "demo_maker",
+    "fullName": "Nguyen Van Demo",
+    "mustChangePassword": true
+  }
 }
 ```
 
-**Response — Có MFA (200 OK):**
+**Body Hoàn tất Onboarding (`POST /v1/auth/onboarding/complete`):**
+```json
+{
+  "onboardingToken": "9a8b7c6d-5e4f...:adm-uuid-123",
+  "newPassword": "NewSecurePassword@123456",
+  "totpCode": 482910
+}
+```
+
+**Response — Kích hoạt thành công & Cấp Access Token + 10 Backup Codes (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Onboarding completed successfully. Account is now active with MFA enabled.",
+  "data": {
+    "mfaRequired": false,
+    "onboardingRequired": false,
+    "accessToken": "eyJhbGciOiJSUzI1NiJ9...",
+    "refreshToken": "dGhpcyBpcyBhIHJl...",
+    "expiresIn": 1800,
+    "adminId": "adm-uuid-123",
+    "username": "demo_maker",
+    "fullName": "Nguyen Van Demo",
+    "mustChangePassword": false,
+    "roles": ["SERVICE_ADMIN"],
+    "permissions": [
+      {"perm": "config:read", "scope": ["system-params-api"]},
+      {"perm": "config:write", "scope": ["system-params-api"]},
+      {"perm": "auth:self", "scope": ["*"]}
+    ],
+    "backupCodes": [
+      "A1B2C3D4", "E5F6G7H8", "I9J0K1L2", "M3N4O5P6", "Q7R8S9T0",
+      "U1V2W3X4", "Y5Z6A7B8", "C9D0E1F2", "G3H4I5J6", "K7L8M9N0"
+    ]
+  }
+}
+```
+
+**Response — Đăng nhập định kỳ có MFA (`POST /v1/auth/login`):**
 ```json
 {
   "success": true,
@@ -501,8 +562,7 @@ Flyway đã nạp sẵn **4 tài khoản** để phục vụ kiểm thử:
   "data": {
     "mfaRequired": true,
     "mfaToken": "eyJhbGciOiJSUzI1NiJ9..."
-  },
-  "timestamp": "2026-09-22T09:00:00Z"
+  }
 }
 ```
 

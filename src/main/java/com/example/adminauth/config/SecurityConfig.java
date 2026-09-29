@@ -50,6 +50,7 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/v1/auth/login",
                                 "/v1/auth/mfa/verify",
+                                "/v1/auth/onboarding/**",
                                 "/v1/auth/refresh",
                                 "/v1/auth/password/forgot",
                                 "/v1/auth/password/reset",

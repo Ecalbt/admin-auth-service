@@ -1,10 +1,13 @@
 package com.example.adminauth.controller;
 
 import com.example.adminauth.common.ApiResponse;
+import com.example.adminauth.dto.auth.CompleteOnboardingRequest;
 import com.example.adminauth.dto.auth.LoginRequest;
 import com.example.adminauth.dto.auth.LoginResponse;
 import com.example.adminauth.dto.auth.MfaVerifyRequest;
+import com.example.adminauth.dto.auth.OnboardingMfaSetupRequest;
 import com.example.adminauth.dto.auth.RefreshTokenRequest;
+import com.example.adminauth.dto.mfa.TotpSetupResponse;
 import com.example.adminauth.security.AdminPrincipal;
 import com.example.adminauth.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,12 +29,27 @@ public class AuthController {
 
     private final AuthService authService;
 
-    @Operation(summary = "Login Step 1: Submit credentials to receive tokens or MFA challenge")
+    @Operation(summary = "Login Step 1: Submit credentials to receive tokens, MFA challenge, or Onboarding challenge")
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest req, HttpServletRequest request) {
         String ip = extractClientIp(request);
         String userAgent = request.getHeader("User-Agent");
         return ApiResponse.ok("Login evaluated", authService.login(req, ip, userAgent));
+    }
+
+    @Operation(summary = "Onboarding Step 1: Initialize/Retrieve TOTP setup using onboarding token")
+    @PostMapping("/onboarding/mfa/setup")
+    public ApiResponse<TotpSetupResponse> setupOnboardingMfa(@Valid @RequestBody OnboardingMfaSetupRequest req) {
+        return ApiResponse.ok("TOTP setup initialized for onboarding", authService.setupOnboardingMfa(req.onboardingToken()));
+    }
+
+    @Operation(summary = "Onboarding Step 2: Complete onboarding by changing password and verifying first TOTP code")
+    @PostMapping("/onboarding/complete")
+    public ApiResponse<LoginResponse> completeOnboarding(@Valid @RequestBody CompleteOnboardingRequest req, HttpServletRequest request) {
+        String ip = extractClientIp(request);
+        String userAgent = request.getHeader("User-Agent");
+        return ApiResponse.ok("Onboarding completed successfully. Account is now active with MFA enabled.",
+                authService.completeOnboarding(req, ip, userAgent));
     }
 
     @Operation(summary = "Login Step 2: Verify MFA code (TOTP or Backup code)")

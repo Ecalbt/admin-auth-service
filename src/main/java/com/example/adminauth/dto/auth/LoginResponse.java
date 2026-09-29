@@ -11,6 +11,10 @@ import java.util.List;
 public record LoginResponse(
         boolean mfaRequired,
         String mfaToken,
+        Boolean onboardingRequired,
+        String onboardingToken,
+        String totpSecretKey,
+        String totpQrCodeUri,
         String accessToken,
         String refreshToken,
         Long expiresIn,
@@ -19,5 +23,6 @@ public record LoginResponse(
         String fullName,
         Boolean mustChangePassword,
         List<String> roles,
-        List<GrantDto> permissions
+        List<GrantDto> permissions,
+        List<String> backupCodes
 ) {}

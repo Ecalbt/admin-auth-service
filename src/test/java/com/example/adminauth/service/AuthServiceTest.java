@@ -187,4 +187,85 @@ class AuthServiceTest {
         verify(sessionRedisService).revokeAllSessionsForAdmin("adm-5");
         verify(refreshTokenRepository).revokeAllForAdmin(eq("adm-5"), any());
     }
+
+    @Test
+    @DisplayName("First-time login of PENDING_ACTIVATION admin returns onboarding challenge with QR code")
+    void testFirstTimeLoginRequiresOnboarding() {
+        Admin admin = Admin.builder()
+                .id("adm-pending")
+                .username("new_admin")
+                .email("new@ocb.com.vn")
+                .passwordHash("temp_hashed_pw")
+                .status(AdminStatus.PENDING_ACTIVATION)
+                .failedLoginAttempts(0)
+                .mustChangePassword(true)
+                .build();
+
+        when(adminRepository.findByUsername("new_admin")).thenReturn(Optional.of(admin));
+        when(passwordEncoder.matches("TempPassword@123", "temp_hashed_pw")).thenReturn(true);
+        when(jwtTokenProvider.generateSecureRandomToken()).thenReturn("random-token");
+        when(mfaService.setupTotp("adm-pending")).thenReturn(
+                new com.example.adminauth.dto.mfa.TotpSetupResponse("SECRETKEY123", "otpauth://totp/...", "SECRETKEY123")
+        );
+
+        LoginResponse resp = authService.login(new LoginRequest("new_admin", "TempPassword@123"), "127.0.0.1", "Agent");
+
+        assertThat(resp.onboardingRequired()).isTrue();
+        assertThat(resp.onboardingToken()).isEqualTo("random-token:adm-pending");
+        assertThat(resp.totpSecretKey()).isEqualTo("SECRETKEY123");
+        assertThat(resp.totpQrCodeUri()).startsWith("otpauth://");
+        assertThat(resp.accessToken()).isNull();
+        verify(sessionRedisService).saveOnboardingToken(eq("adm-pending"), eq("random-token"), any());
+    }
+
+    @Test
+    @DisplayName("Complete onboarding activates account, sets new password, confirms MFA, and issues tokens with backup codes")
+    void testCompleteOnboardingSuccess() {
+        Admin admin = Admin.builder()
+                .id("adm-pending")
+                .username("new_admin")
+                .email("new@ocb.com.vn")
+                .passwordHash("temp_hashed_pw")
+                .status(AdminStatus.PENDING_ACTIVATION)
+                .mustChangePassword(true)
+                .build();
+
+        when(sessionRedisService.validateOnboardingToken("adm-pending", "random-token")).thenReturn(true);
+        when(adminRepository.findById("adm-pending")).thenReturn(Optional.of(admin));
+        when(passwordEncoder.matches("NewSecurePassword@123", "temp_hashed_pw")).thenReturn(false);
+        when(passwordHistoryRepository.findRecentHistory(eq("adm-pending"), any())).thenReturn(List.of());
+        when(mfaService.confirmTotp("adm-pending", 123456)).thenReturn(
+                new com.example.adminauth.dto.mfa.BackupCodesResponse(List.of("CODE1", "CODE2"))
+        );
+        when(passwordEncoder.encode("NewSecurePassword@123")).thenReturn("new_hashed_pw");
+
+        AdminSessionDto sessionDto = new AdminSessionDto(
+                "sess-onboard", "adm-pending", "new_admin", "127.0.0.1", "Agent",
+                Instant.now(), Instant.now(), Instant.now().plusSeconds(1800)
+        );
+        when(sessionRedisService.createSession(eq("adm-pending"), eq("new_admin"), any(), any())).thenReturn(sessionDto);
+        when(adminRoleRepository.findByAdminId("adm-pending")).thenReturn(List.of());
+        when(jwtTokenProvider.generateAccessToken(any(), any(), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn("access_token_jwt");
+        when(jwtTokenProvider.generateSecureRandomToken()).thenReturn("raw_rt");
+        when(jwtTokenProvider.hashToken("raw_rt")).thenReturn("rt_hash");
+        when(refreshTokenRepository.save(any(RefreshToken.class))).thenAnswer(i -> i.getArgument(0));
+
+        var req = new com.example.adminauth.dto.auth.CompleteOnboardingRequest(
+                "random-token:adm-pending", "NewSecurePassword@123", 123456
+        );
+
+        LoginResponse resp = authService.completeOnboarding(req, "127.0.0.1", "Agent");
+
+        assertThat(resp).isNotNull();
+        assertThat(resp.accessToken()).isEqualTo("access_token_jwt");
+        assertThat(resp.backupCodes()).containsExactly("CODE1", "CODE2");
+        assertThat(resp.onboardingRequired()).isFalse();
+        assertThat(admin.getStatus()).isEqualTo(AdminStatus.ACTIVE);
+        assertThat(admin.getMustChangePassword()).isFalse();
+        assertThat(admin.getPasswordHash()).isEqualTo("new_hashed_pw");
+
+        verify(sessionRedisService).removeOnboardingToken("adm-pending");
+        verify(passwordHistoryRepository).save(any(com.example.adminauth.entity.PasswordHistory.class));
+    }
 }
