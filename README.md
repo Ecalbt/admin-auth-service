@@ -108,7 +108,47 @@ mvn spring-boot:run
 
 ---
 
-## 👥 4. Tài khoản Kiểm thử Mặc định (Seed Accounts)
+## ⚙️ 4. Cấu hình Biến Môi trường (.env Configuration)
+
+Dự án hỗ trợ cấu hình động qua file `.env` hoặc System Environment Variables. Bạn có thể sao chép file mẫu để tùy chỉnh cho môi trường của mình:
+```powershell
+cp .env.example .env
+```
+
+Bảng tổng hợp các biến môi trường chính:
+
+| Phân nhóm | Biến môi trường | Giá trị mặc định (dev) | Mô tả |
+|:---|:---|:---|:---|
+| **Server** | `SERVER_PORT` | `8081` | Cổng HTTP của service |
+| | `APP_CONTEXT_PATH` | `/api` | Base context path của API |
+| | `SPRING_PROFILES_ACTIVE` | `dev` | Spring active profile |
+| **PostgreSQL** | `DB_HOST` | `localhost` | Địa chỉ máy chủ PostgreSQL |
+| | `DB_PORT` | `5433` | Cổng kết nối PostgreSQL |
+| | `DB_NAME` | `admin_auth_db` | Tên cơ sở dữ liệu |
+| | `DB_USER` | `admin_user` | Tài khoản kết nối CSDL |
+| | `DB_PASSWORD` | `admin_password` | Mật khẩu kết nối CSDL |
+| **Redis** | `REDIS_HOST` | `localhost` | Địa chỉ máy chủ Redis |
+| | `REDIS_PORT` | `6380` | Cổng kết nối Redis |
+| | `REDIS_TIMEOUT` | `2000ms` | Thời gian timeout kết nối Redis |
+| **Apache Kafka** | `KAFKA_BOOTSTRAP_SERVERS`| `localhost:9092` | Địa chỉ Kafka Broker |
+| | `SCHEMA_REGISTRY_URL` | `http://localhost:8082` | Địa chỉ Confluent Schema Registry |
+| | `KAFKA_TOPIC_AUDIT` | `admin.auth.audit.events` | Topic phát sự kiện kiểm toán |
+| | `KAFKA_TOPIC_NOTIFICATION`| `admin.auth.notification.events`| Topic phát sự kiện thông báo |
+| **JWT & Security** | `JWT_ISSUER` | `https://auth.autoeaning.ocb.com.vn` | Tên đơn vị phát hành token |
+| | `JWT_KEY_ID` | `ocb-admin-auth-key-1` | Định danh key trong JWKS |
+| | `JWT_ACCESS_TOKEN_EXPIRATION_SECONDS` | `1800` | Thời hạn Access Token (30 phút) |
+| | `JWT_REFRESH_TOKEN_EXPIRATION_SECONDS`| `86400` | Thời hạn Refresh Token (24 giờ) |
+| | `JWT_KEYS_DIR` | `./keys` | Thư mục lưu trữ RSA key pair |
+| **MFA TOTP** | `MFA_ISSUER` | `OCB-AutoEarning-Admin` | Tên hiển thị trên Authenticator |
+| | `MFA_TOKEN_EXPIRATION_SECONDS` | `300` | Thời hạn token challenge (5 phút) |
+| **Outbox Relay** | `OUTBOX_RELAY_ENABLED` | `true` | Bật/tắt tiến trình relay lên Kafka |
+| | `OUTBOX_RELAY_FIXED_DELAY_MS` | `500` | Chu kỳ polling kiểm tra outbox (ms) |
+| | `OUTBOX_RELAY_BATCH_SIZE` | `100` | Số event xử lý mỗi đợt (`SKIP LOCKED`)|
+| | `OUTBOX_CLEANER_RETENTION_DAYS` | `14` | Thời gian lưu trữ event đã gửi (ngày) |
+
+---
+
+## 👥 5. Tài khoản Kiểm thử Mặc định (Seed Accounts)
 
 Hệ thống đã nạp sẵn 4 tài khoản mẫu để phục vụ kiểm thử nhanh:
 
@@ -121,7 +161,7 @@ Hệ thống đã nạp sẵn 4 tài khoản mẫu để phục vụ kiểm th�
 
 ---
 
-## 📂 5. Cấu trúc Thư mục Dự án (Project Structure)
+## 📂 6. Cấu trúc Thư mục Dự án (Project Structure)
 
 ```
 admin-auth-service/
@@ -141,7 +181,9 @@ admin-auth-service/
 │   └── resources/
 │       ├── application.properties          # Cấu hình Database, Redis, Kafka, JWT, Outbox
 │       └── db/migration/                   # Flyway Migrations (V1 Schema, V2 Seed, V3 Outbox)
-├── docker-compose.yml                      # Định nghĩa cụm hạ tầng Postgres, Redis, Kafka, Schema Reg, UI
+├── .env.example                            # File mẫu biến môi trường
+├── .env                                    # Biến môi trường local (đã gitignore)
+├── docker-compose.yml                      # Cụm hạ tầng Postgres, Redis, Kafka, Schema Reg, UI
 ├── SRS.md                                  # Tài liệu Đặc tả Yêu cầu Phần mềm chuẩn IEEE 830
 ├── TEST_SCENARIOS.md                       # Hướng dẫn 9 Kịch bản kiểm thử End-to-End
 ├── TEST_CASES.md                           # 110 Test Cases tự động & danh mục GAP kỹ thuật
@@ -151,7 +193,7 @@ admin-auth-service/
 
 ---
 
-## 🧪 6. Kiểm thử Tự động (Automated Testing)
+## 🧪 7. Kiểm thử Tự động (Automated Testing)
 
 Dự án sở hữu bộ kiểm thử tự động gồm **109 Unit & Integration Tests** bao phủ toàn bộ các tầng Service, Repository, JWT, Redis Session và Outbox Relay.
 
@@ -170,7 +212,7 @@ Kết quả mong đợi:
 
 ---
 
-## 📚 7. Trung tâm Tài liệu (Documentation Hub)
+## 📚 8. Trung tâm Tài liệu (Documentation Hub)
 
 Để tìm hiểu sâu hơn về từng khía cạnh kỹ thuật, vui lòng tham khảo các tài liệu chuyên biệt:
 
