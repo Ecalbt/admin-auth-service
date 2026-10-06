@@ -36,6 +36,8 @@ public class MfaServiceImpl implements MfaService {
     private final AdminRepository adminRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final com.example.adminauth.security.session.SessionRedisService sessionRedisService;
+    private final com.example.adminauth.service.AuditService auditService;
+    private final com.example.adminauth.messaging.NotificationService notificationService;
 
     @Value("${app.mfa.issuer:OCB-AutoEarning-Admin}")
     private String issuer;
@@ -79,6 +81,21 @@ public class MfaServiceImpl implements MfaService {
         totpSecretRepository.save(totpSecret);
 
         List<String> rawCodes = generateBackupCodes(totpSecret.getAdmin());
+
+        // Audit & Notification for MFA_ENABLED
+        auditService.recordEvent(adminId, "MFA_ENABLED", adminId, null, "TOTP MFA enabled and backup codes generated", null, null, null);
+        notificationService.sendNotification(
+                com.example.adminauth.event.NotificationEventType.MFA_ENABLED,
+                adminId,
+                totpSecret.getAdmin().getUsername(),
+                totpSecret.getAdmin().getEmail(),
+                java.util.Collections.emptyMap(),
+                adminId,
+                totpSecret.getAdmin().getUsername(),
+                "TOTP MFA enabled",
+                null
+        );
+
         return new BackupCodesResponse(rawCodes);
     }
 

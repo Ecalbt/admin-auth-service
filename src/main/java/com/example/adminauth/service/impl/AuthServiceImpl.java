@@ -29,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -48,6 +49,7 @@ public class AuthServiceImpl implements AuthService {
     private final MfaService mfaService;
     private final AuditService auditService;
     private final AdminMapper adminMapper;
+    private final com.example.adminauth.messaging.NotificationService notificationService;
 
     @Value("${app.security.max-failed-attempts:5}")
     private int maxFailedAttempts;
@@ -74,6 +76,17 @@ public class AuthServiceImpl implements AuthService {
                 admin.setLockedUntil(LocalDateTime.now().plusMinutes(lockoutDurationMinutes));
                 auditService.recordEvent(admin.getUsername(), "ACCOUNT_LOCKED", admin.getId(),
                         null, "Account locked after " + attempts + " failed attempts", ipAddress, userAgent, null);
+                notificationService.sendNotification(
+                        com.example.adminauth.event.NotificationEventType.ACCOUNT_LOCKED,
+                        admin.getId(),
+                        admin.getUsername(),
+                        admin.getEmail(),
+                        Map.of("failedAttempts", String.valueOf(attempts), "lockoutMinutes", String.valueOf(lockoutDurationMinutes)),
+                        "SYSTEM",
+                        "SYSTEM",
+                        "Account locked due to 5 consecutive failed login attempts",
+                        null
+                );
                 adminRepository.save(admin);
                 throw new LockedException("Account is locked due to too many failed login attempts. Try again in " + lockoutDurationMinutes + " minutes.");
             }
@@ -291,6 +304,18 @@ public class AuthServiceImpl implements AuthService {
                     "Revoked token family " + refreshToken.getFamilyId(), ipAddress, userAgent, null
             );
 
+            notificationService.sendNotification(
+                    com.example.adminauth.event.NotificationEventType.TOKEN_REUSE_DETECTED,
+                    refreshToken.getAdmin().getId(),
+                    refreshToken.getAdmin().getUsername(),
+                    refreshToken.getAdmin().getEmail(),
+                    Map.of("familyId", refreshToken.getFamilyId()),
+                    "SYSTEM",
+                    "SYSTEM",
+                    "Security Alert: Refresh token reuse detected",
+                    null
+            );
+
             throw new BadCredentialsException("Security Alert: Token reuse detected. All active tokens have been revoked.");
         }
 
@@ -392,6 +417,17 @@ public class AuthServiceImpl implements AuthService {
         refreshTokenRepository.revokeAllForAdmin(admin.getId(), LocalDateTime.now());
 
         auditService.recordEvent(admin.getUsername(), "PASSWORD_CHANGED", admin.getId(), null, "Password changed successfully", null, null, null);
+        notificationService.sendNotification(
+                com.example.adminauth.event.NotificationEventType.PASSWORD_CHANGED,
+                admin.getId(),
+                admin.getUsername(),
+                admin.getEmail(),
+                java.util.Collections.emptyMap(),
+                admin.getId(),
+                admin.getUsername(),
+                "Password changed successfully",
+                null
+        );
     }
 
     @Override

@@ -42,6 +42,7 @@ public class AdminManagementServiceImpl implements AdminManagementService {
     private final AuditService auditService;
     private final AdminMapper adminMapper;
     private final ObjectMapper objectMapper;
+    private final com.example.adminauth.messaging.NotificationService notificationService;
 
     @Override
     @Transactional
@@ -91,6 +92,18 @@ public class AdminManagementServiceImpl implements AdminManagementService {
                 actor.getUsername(), "ACCOUNT_CREATED", admin.getId(),
                 null, Map.of("username", admin.getUsername(), "role", targetRole.getCode()),
                 null, null, null
+        );
+
+        notificationService.sendNotification(
+                com.example.adminauth.event.NotificationEventType.ADMIN_ACCOUNT_CREATED,
+                admin.getId(),
+                admin.getUsername(),
+                admin.getEmail(),
+                Map.of("temporaryPassword", rawPassword, "role", targetRole.getCode()),
+                actor.getId() != null ? actor.getId() : actor.getUsername(),
+                actor.getUsername(),
+                "Account created by administrator",
+                null
         );
 
         AdminDetailDto detail = getAdminDetail(admin.getId());
@@ -149,6 +162,17 @@ public class AdminManagementServiceImpl implements AdminManagementService {
         refreshTokenRepository.revokeAllForAdmin(adminId, LocalDateTime.now());
 
         auditService.recordEvent(actor.getUsername(), "ACCOUNT_DISABLED", admin.getId(), null, null, null, null, null);
+        notificationService.sendNotification(
+                com.example.adminauth.event.NotificationEventType.ACCOUNT_DISABLED,
+                admin.getId(),
+                admin.getUsername(),
+                admin.getEmail(),
+                java.util.Collections.emptyMap(),
+                actor.getId() != null ? actor.getId() : actor.getUsername(),
+                actor.getUsername(),
+                "Account disabled by administrator",
+                null
+        );
         log.info("Admin '{}' has been disabled by '{}'", admin.getUsername(), actor.getUsername());
     }
 
@@ -168,6 +192,17 @@ public class AdminManagementServiceImpl implements AdminManagementService {
         adminRepository.save(admin);
 
         auditService.recordEvent(actor.getUsername(), "ACCOUNT_ENABLED", admin.getId(), null, null, null, null, null);
+        notificationService.sendNotification(
+                com.example.adminauth.event.NotificationEventType.ACCOUNT_ENABLED,
+                admin.getId(),
+                admin.getUsername(),
+                admin.getEmail(),
+                java.util.Collections.emptyMap(),
+                actor.getId() != null ? actor.getId() : actor.getUsername(),
+                actor.getUsername(),
+                "Account enabled by administrator",
+                null
+        );
         log.info("Admin '{}' has been enabled by '{}'", admin.getUsername(), actor.getUsername());
     }
 
@@ -193,6 +228,17 @@ public class AdminManagementServiceImpl implements AdminManagementService {
         refreshTokenRepository.revokeAllForAdmin(adminId, LocalDateTime.now());
 
         auditService.recordEvent(actor.getUsername(), "PASSWORD_RESET", admin.getId(), null, null, null, null, null);
+        notificationService.sendNotification(
+                com.example.adminauth.event.NotificationEventType.PASSWORD_RESET,
+                admin.getId(),
+                admin.getUsername(),
+                admin.getEmail(),
+                Map.of("temporaryPassword", temporaryPassword),
+                actor.getId() != null ? actor.getId() : actor.getUsername(),
+                actor.getUsername(),
+                "Password reset by administrator",
+                null
+        );
         log.info("Password for admin '{}' reset by '{}'", admin.getUsername(), actor.getUsername());
 
         return new ResetPasswordResponse(temporaryPassword);
@@ -217,6 +263,7 @@ public class AdminManagementServiceImpl implements AdminManagementService {
 
         // Replace Roles
         adminRoleRepository.deleteByAdminId(adminId);
+        adminRoleRepository.flush();
         for (Role role : targetRoles) {
             AdminRole ar = AdminRole.builder()
                     .admin(admin)
@@ -228,6 +275,7 @@ public class AdminManagementServiceImpl implements AdminManagementService {
 
         // Replace Permissions (Hybrid: Preload Preset + Custom Grants)
         adminPermissionRepository.deleteByAdminId(adminId);
+        adminPermissionRepository.flush();
         applyPermissionsToAdmin(admin, targetRoles, req.customGrants(), actor.getUsername());
 
         // Snapshot token revocation rule: Must revoke all active sessions so user logs in with new permissions
@@ -237,6 +285,18 @@ public class AdminManagementServiceImpl implements AdminManagementService {
         auditService.recordEvent(
                 actor.getUsername(), "ROLE_ASSIGNED", admin.getId(),
                 null, Map.of("roles", req.roleCodes()), null, null, null
+        );
+
+        notificationService.sendNotification(
+                com.example.adminauth.event.NotificationEventType.ROLES_PERMISSIONS_CHANGED,
+                admin.getId(),
+                admin.getUsername(),
+                admin.getEmail(),
+                Map.of("roles", String.join(",", req.roleCodes())),
+                actor.getId() != null ? actor.getId() : actor.getUsername(),
+                actor.getUsername(),
+                "Roles and permissions updated",
+                null
         );
 
         return getAdminDetail(adminId);

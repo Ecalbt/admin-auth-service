@@ -24,6 +24,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -37,6 +38,9 @@ class AuditServiceTest {
 
     @Mock
     private AuditMapper auditMapper;
+
+    @Mock
+    private com.example.adminauth.messaging.OutboxWriter outboxWriter;
 
     @Spy
     private ObjectMapper objectMapper = new ObjectMapper();
@@ -99,17 +103,17 @@ class AuditServiceTest {
     }
 
     @Test
-    @DisplayName("RES-02: Recording audit event handles DB failure gracefully without breaking business flow")
+    @DisplayName("RES-02 & GAP-09: Recording audit event fails fast and throws exception on DB failure to guarantee transaction rollback")
     void testRecordEventHandlesFailureGracefully() {
         when(auditEventRepository.save(any(AuditEvent.class)))
                 .thenThrow(new RuntimeException("DB Connection Timeout"));
 
-        // Must not crash calling thread (logs CRITICAL_SECURITY_ALERT)
-        auditService.recordEvent(
+        assertThatThrownBy(() -> auditService.recordEvent(
                 "superadmin", "ACCOUNT_DISABLED", "adm-bad",
                 null, "Disabling malicious admin",
                 "10.0.0.1", "Agent", null
-        );
+        )).isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Audit event persistence failure");
 
         verify(auditEventRepository).save(any(AuditEvent.class));
     }

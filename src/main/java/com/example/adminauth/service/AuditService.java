@@ -11,10 +11,6 @@ import java.time.LocalDateTime;
  */
 public interface AuditService {
 
-    void recordEventAsync(String actorId, String action, String targetId,
-                          Object beforeState, Object afterState,
-                          String ipAddress, String userAgent, String correlationId);
-
     void recordEvent(String actorId, String action, String targetId,
                      Object beforeState, Object afterState,
                      String ipAddress, String userAgent, String correlationId);

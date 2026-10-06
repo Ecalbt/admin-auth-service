@@ -67,6 +67,8 @@ class AuthServiceTest {
     private AuditService auditService;
     @Mock
     private com.example.adminauth.mapper.AdminMapper adminMapper;
+    @Mock
+    private com.example.adminauth.messaging.NotificationService notificationService;
     @Spy
     private com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 

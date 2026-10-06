@@ -1,0 +1,118 @@
+{
+  "type": "record",
+  "name": "AuditEventV1",
+  "namespace": "com.example.adminauth.event",
+  "doc": "Audit Event schema for OCB Auto-Earning admin-auth-service",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique event UUID for idempotency"
+    },
+    {
+      "name": "eventType",
+      "type": {
+        "type": "enum",
+        "name": "AuditEventType",
+        "symbols": [
+          "LOGIN_SUCCESS",
+          "LOGIN_FAILED",
+          "ACCOUNT_LOCKED",
+          "ONBOARDING_REQUIRED",
+          "ONBOARDING_COMPLETED",
+          "MFA_VERIFIED",
+          "MFA_FAILED",
+          "TOKEN_REUSE_DETECTED",
+          "LOGOUT",
+          "PASSWORD_CHANGED",
+          "PASSWORD_RESET",
+          "ACCOUNT_CREATED",
+          "ACCOUNT_UPDATED",
+          "ACCOUNT_DISABLED",
+          "ACCOUNT_ENABLED",
+          "ROLE_ASSIGNED",
+          "SESSION_REVOKED",
+          "SESSION_REVOKED_ALL",
+          "MFA_ENABLED"
+        ]
+      },
+      "doc": "Audit event type"
+    },
+    {
+      "name": "severity",
+      "type": {
+        "type": "enum",
+        "name": "EventSeverity",
+        "symbols": ["INFO", "WARN", "SECURITY"]
+      },
+      "doc": "Event severity level"
+    },
+    {
+      "name": "actorId",
+      "type": "string",
+      "doc": "ID of administrator who initiated the action"
+    },
+    {
+      "name": "actorUsername",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Username of actor"
+    },
+    {
+      "name": "targetId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "ID of resource or subject being acted upon"
+    },
+    {
+      "name": "targetType",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Type of target (ADMIN, SESSION, TOKEN...)"
+    },
+    {
+      "name": "beforeState",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "JSON representation of state before mutation"
+    },
+    {
+      "name": "afterState",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "JSON representation of state after mutation"
+    },
+    {
+      "name": "ipAddress",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Client IP address"
+    },
+    {
+      "name": "userAgent",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Client User-Agent"
+    },
+    {
+      "name": "correlationId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "MDC trace / correlation ID"
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "Business occurrence epoch millisecond"
+    },
+    {
+      "name": "serviceName",
+      "type": "string",
+      "default": "admin-auth-service",
+      "doc": "Source service name"
+    }
+  ]
+}

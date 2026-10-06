@@ -47,6 +47,9 @@ class SessionManagementServiceTest {
     @Mock
     private AdminRoleRepository adminRoleRepository;
 
+    @Mock
+    private com.example.adminauth.messaging.NotificationService notificationService;
+
     @InjectMocks
     private SessionManagementServiceImpl sessionManagementService;
 

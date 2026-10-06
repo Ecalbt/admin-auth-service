@@ -30,6 +30,7 @@ public class SessionManagementServiceImpl implements SessionManagementService {
     private final AuditService auditService;
     private final AdminRepository adminRepository;
     private final AdminRoleRepository adminRoleRepository;
+    private final com.example.adminauth.messaging.NotificationService notificationService;
 
     @Override
     public List<AdminSessionDto> getMySessions(AdminPrincipal actor) {
@@ -58,6 +59,23 @@ public class SessionManagementServiceImpl implements SessionManagementService {
                 actor.getUsername(), "SESSION_REVOKED", adminId,
                 null, "Revoked session: " + sessionId, null, null, null
         );
+
+        if (!adminId.equals(actor.getId())) {
+            adminRepository.findById(adminId).ifPresent(targetAdmin ->
+                    notificationService.sendNotification(
+                            com.example.adminauth.event.NotificationEventType.SESSION_REVOKED,
+                            adminId,
+                            targetAdmin.getUsername(),
+                            targetAdmin.getEmail(),
+                            java.util.Map.of("sessionId", sessionId),
+                            actor.getId(),
+                            actor.getUsername(),
+                            "Session revoked by administrator",
+                            null
+                    )
+            );
+        }
+
         log.info("Session '{}' for admin '{}' revoked by '{}'", sessionId, adminId, actor.getUsername());
     }
 
@@ -75,6 +93,23 @@ public class SessionManagementServiceImpl implements SessionManagementService {
                 actor.getUsername(), "SESSION_REVOKED_ALL", adminId,
                 null, "Revoked all sessions", null, null, null
         );
+
+        if (!adminId.equals(actor.getId())) {
+            adminRepository.findById(adminId).ifPresent(targetAdmin ->
+                    notificationService.sendNotification(
+                            com.example.adminauth.event.NotificationEventType.SESSION_REVOKED_ALL,
+                            adminId,
+                            targetAdmin.getUsername(),
+                            targetAdmin.getEmail(),
+                            java.util.Collections.emptyMap(),
+                            actor.getId(),
+                            actor.getUsername(),
+                            "All sessions revoked by administrator",
+                            null
+                    )
+            );
+        }
+
         log.info("All sessions for admin '{}' revoked by '{}'", adminId, actor.getUsername());
     }
 

@@ -1,0 +1,118 @@
+{
+  "type": "record",
+  "name": "NotificationEventV1",
+  "namespace": "com.example.adminauth.event",
+  "doc": "Notification Event schema for OCB Auto-Earning admin-auth-service",
+  "fields": [
+    {
+      "name": "eventId",
+      "type": "string",
+      "doc": "Unique event UUID for idempotency"
+    },
+    {
+      "name": "eventType",
+      "type": {
+        "type": "enum",
+        "name": "NotificationEventType",
+        "symbols": [
+          "ADMIN_ACCOUNT_CREATED",
+          "PASSWORD_RESET",
+          "ACCOUNT_DISABLED",
+          "ACCOUNT_ENABLED",
+          "ROLES_PERMISSIONS_CHANGED",
+          "SESSION_REVOKED",
+          "SESSION_REVOKED_ALL",
+          "ACCOUNT_LOCKED",
+          "TOKEN_REUSE_DETECTED",
+          "PASSWORD_CHANGED",
+          "MFA_ENABLED"
+        ]
+      },
+      "doc": "Notification event type"
+    },
+    {
+      "name": "recipientId",
+      "type": "string",
+      "doc": "Target recipient ID (admin ID)"
+    },
+    {
+      "name": "recipientUsername",
+      "type": "string",
+      "doc": "Target recipient username"
+    },
+    {
+      "name": "recipientEmail",
+      "type": "string",
+      "doc": "Target recipient email"
+    },
+    {
+      "name": "channels",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "enum",
+          "name": "NotificationChannel",
+          "symbols": ["EMAIL", "IN_APP", "SECURITY_ALERT"]
+        }
+      },
+      "doc": "Dispatched communication channels"
+    },
+    {
+      "name": "templateCode",
+      "type": "string",
+      "doc": "Template identifier for notification rendering downstream"
+    },
+    {
+      "name": "params",
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "doc": "Template dynamic parameter key-value pairs"
+    },
+    {
+      "name": "sensitive",
+      "type": "boolean",
+      "default": false,
+      "doc": "Indicates whether params contain sensitive data (e.g. temp password)"
+    },
+    {
+      "name": "actorId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Actor ID who triggered this action"
+    },
+    {
+      "name": "actorUsername",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Actor username who triggered this action"
+    },
+    {
+      "name": "reason",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Reason for action (optional)"
+    },
+    {
+      "name": "occurredAt",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "Business occurrence epoch millisecond"
+    },
+    {
+      "name": "correlationId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "MDC trace / correlation ID"
+    },
+    {
+      "name": "serviceName",
+      "type": "string",
+      "default": "admin-auth-service",
+      "doc": "Source service name"
+    }
+  ]
+}
