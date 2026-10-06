@@ -54,7 +54,7 @@ public class NotificationService {
                 .setReason(reason)
                 .setOccurredAt(Instant.now())
                 .setCorrelationId(correlationId)
-                .setServiceName("admin-auth-service")
+                .setServiceName("ae-admin-auth-service")
                 .build();
 
         outboxWriter.writeNotificationEvent(event);

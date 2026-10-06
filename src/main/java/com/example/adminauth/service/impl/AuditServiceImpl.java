@@ -92,7 +92,7 @@ public class AuditServiceImpl implements AuditService {
                     .setUserAgent(userAgent)
                     .setCorrelationId(correlationId)
                     .setOccurredAt(Instant.now())
-                    .setServiceName("admin-auth-service")
+                    .setServiceName("ae-admin-auth-service")
                     .build();
 
             outboxWriter.writeAuditEvent(avroEvent);

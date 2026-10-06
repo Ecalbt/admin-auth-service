@@ -2,7 +2,7 @@
   "type": "record",
   "name": "AuditEventV1",
   "namespace": "com.example.adminauth.event",
-  "doc": "Audit Event schema for OCB Auto-Earning admin-auth-service",
+  "doc": "Audit Event schema for OCB Auto-Earning ae-admin-auth-service",
   "fields": [
     {
       "name": "eventId",
@@ -111,7 +111,7 @@
     {
       "name": "serviceName",
       "type": "string",
-      "default": "admin-auth-service",
+      "default": "ae-admin-auth-service",
       "doc": "Source service name"
     }
   ]

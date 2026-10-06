@@ -60,7 +60,7 @@ class OutboxWriterTest {
                 .setUserAgent("Browser")
                 .setCorrelationId("c-1")
                 .setOccurredAt(Instant.now())
-                .setServiceName("admin-auth-service")
+                .setServiceName("ae-admin-auth-service")
                 .build();
 
         when(outboxEventMapper.toJson(event)).thenReturn("{\"eventId\":\"" + eventId + "\"}");
@@ -99,7 +99,7 @@ class OutboxWriterTest {
                 .setReason(null)
                 .setOccurredAt(Instant.now())
                 .setCorrelationId("c-2")
-                .setServiceName("admin-auth-service")
+                .setServiceName("ae-admin-auth-service")
                 .build();
 
         when(outboxEventMapper.toJson(event)).thenReturn("{\"eventId\":\"" + eventId + "\"}");

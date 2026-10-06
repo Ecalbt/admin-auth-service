@@ -1,6 +1,6 @@
-# Kịch bản Kiểm thử & Demo Bảo mật — Admin Auth Service
+# Kịch bản Kiểm thử & Demo Bảo mật — AE Admin Auth Service
 
-Tài liệu này cung cấp toàn bộ các **kịch bản kiểm thử thực tế (Manual Test Scenarios)** từng bước để demo các tính năng bảo mật, phân quyền và xác thực của **`admin-auth-service`** thông qua **Swagger UI** hoặc **cURL / Postman**.
+Tài liệu này cung cấp toàn bộ các **kịch bản kiểm thử thực tế (Manual Test Scenarios)** từng bước để demo các tính năng bảo mật, phân quyền và xác thực của **`ae-admin-auth-service`** thông qua **Swagger UI** hoặc **cURL / Postman**.
 
 ---
 
@@ -23,7 +23,7 @@ Tài liệu này cung cấp toàn bộ các **kịch bản kiểm thử thực t
 ## 1. Chuẩn bị môi trường & Tài khoản
 
 ### 1.1. Khởi động dịch vụ
-Mở terminal tại thư mục `admin-auth-service`:
+Mở terminal tại thư mục `ae-admin-auth-service`:
 ```powershell
 # 1. Khởi động hạ tầng: PostgreSQL (5433), Redis (6380), Kafka (9092), Schema Registry (8082), Kafka UI (8090)
 docker-compose up -d
@@ -761,7 +761,7 @@ Nghiệp vụ (POST API) ──[1 Tx]──▶ DB (audit_events + INSERT outbox_
      - `key`: ID hoặc username của `svc_maker`
      - `eventType`: `"LOGIN_SUCCESS"`
      - `severity`: `"INFO"`
-     - `serviceName`: `"admin-auth-service"`
+     - `serviceName`: `"ae-admin-auth-service"`
      - `occurredAt`: Timestamp thời gian thực
 
 ---

@@ -1,4 +1,4 @@
-# Admin Auth Service — OCB Auto-Earning
+# AE Admin Auth Service — OCB Auto-Earning
 
 Dịch vụ trung tâm **Quản lý Định danh, Xác thực, Phân quyền và Phiên đăng nhập (IAM)** cho Cổng quản trị **OCB Auto-Earning Admin Portal**.
 
@@ -13,7 +13,7 @@ Dịch vụ trung tâm **Quản lý Định danh, Xác thực, Phân quyền và
 
 ## 📌 1. Giới thiệu & Vai trò
 
-Trong hệ sinh thái **OCB Auto-Earning**, `admin-auth-service` đóng vai trò là **Identity Provider (IdP) độc lập**:
+Trong hệ sinh thái **OCB Auto-Earning**, `ae-admin-auth-service` đóng vai trò là **Identity Provider (IdP) độc lập**:
 * **Tách rời nghiệp vụ Auth:** Các dịch vụ nội bộ downstream (như `system-params-api`, Auto-Earning Engine, Report Service...) **không tự lưu mật khẩu hay quản lý phiên**, mà hoàn toàn tin cậy vào chữ ký điện tử của service này.
 * **Xác minh phi tập trung (Decoupled Verification):** Downstream services tự động nạp public key qua endpoint `/.well-known/jwks.json` để thẩm định chữ ký JWT Access Token cục bộ với độ trễ nano-giây.
 
@@ -24,7 +24,7 @@ Trong hệ sinh thái **OCB Auto-Earning**, `admin-auth-service` đóng vai trò
                │ Đăng nhập / MFA / Session      │ Gọi API nghiệp vụ kèm JWT
                ▼                               ▼
     ┌──────────────────────┐        ┌──────────────────────┐
-    │  admin-auth-service  │        │  system-params-api   │
+    │ae-admin-auth-service │        │  system-params-api   │
     │   (IAM Trung tâm)    │        │  (Downstream Service)│
     │                      │        │                      │
     │ • JWT RS256 + JWKS   │        │ • Verify qua JWKS    │
@@ -42,7 +42,7 @@ Trong hệ sinh thái **OCB Auto-Earning**, `admin-auth-service` đóng vai trò
 ```
 
 > 📖 **Lưu ý:** Để xem đặc tả chi tiết toàn bộ các luồng nghiệp vụ, cấu trúc bảng CSDL và danh sách đầy đủ 26 REST APIs, vui lòng xem tài liệu:
-> 👉 **[Tài liệu Đặc tả Yêu cầu Phần mềm (SRS.md)](SRS.md)**
+> 👉 **[Tài liệu Đặc tả Yêu cầu Phần mềm (SRS.md)](docs/SRS.md)**
 
 ---
 
@@ -164,7 +164,7 @@ Hệ thống đã nạp sẵn 4 tài khoản mẫu để phục vụ kiểm th�
 ## 📂 6. Cấu trúc Thư mục Dự án (Project Structure)
 
 ```
-admin-auth-service/
+ae-admin-auth-service/
 ├── src/main/
 │   ├── avro/                               # Định nghĩa schema Apache Avro (.avsc)
 │   │   ├── AuditEventV1.avsc
@@ -184,10 +184,11 @@ admin-auth-service/
 ├── .env.example                            # File mẫu biến môi trường
 ├── .env                                    # Biến môi trường local (đã gitignore)
 ├── docker-compose.yml                      # Cụm hạ tầng Postgres, Redis, Kafka, Schema Reg, UI
-├── SRS.md                                  # Tài liệu Đặc tả Yêu cầu Phần mềm chuẩn IEEE 830
-├── TEST_SCENARIOS.md                       # Hướng dẫn 9 Kịch bản kiểm thử End-to-End
-├── TEST_CASES.md                           # 110 Test Cases tự động & danh mục GAP kỹ thuật
-├── KAFKA_PLAN.md                           # Thiết kế chi tiết Transactional Outbox & Event Streaming
+├── docs/
+│   ├── SRS.md                              # Tài liệu Đặc tả Yêu cầu Phần mềm chuẩn IEEE 830
+│   ├── TEST_SCENARIOS.md                   # Hướng dẫn 9 Kịch bản kiểm thử End-to-End
+│   ├── TEST_CASES.md                       # 110 Test Cases tự động & danh mục GAP kỹ thuật
+│   └── KAFKA_PLAN.md                       # Thiết kế chi tiết Transactional Outbox & Event Streaming
 └── pom.xml                                 # Cấu hình dependencies & Avro Maven Plugin
 ```
 
@@ -199,7 +200,7 @@ Dự án sở hữu bộ kiểm thử tự động gồm **109 Unit & Integratio
 
 Chạy toàn bộ test suite bằng Maven:
 ```powershell
-mvn clean test
+.\mvnw.cmd clean test
 ```
 
 Kết quả mong đợi:
@@ -216,11 +217,11 @@ Kết quả mong đợi:
 
 Để tìm hiểu sâu hơn về từng khía cạnh kỹ thuật, vui lòng tham khảo các tài liệu chuyên biệt:
 
-1. 📘 **[SRS.md (Software Requirements Specification)](SRS.md):** 
+1. 📘 **[SRS.md (Software Requirements Specification)](docs/SRS.md):** 
    Tài liệu đặc tả chuẩn IEEE 830: Mô tả chi tiết 6 Module chức năng, bảng đặc tả 26 REST APIs, mô hình Hybrid RBAC/ABAC, yêu cầu phi chức năng (NFR) và Ma trận truy vết yêu cầu (RTM).
-2. 🧪 **[TEST_SCENARIOS.md (Test Scenarios & Demo Guide)](TEST_SCENARIOS.md):**
+2. 🧪 **[TEST_SCENARIOS.md (Test Scenarios & Demo Guide)](docs/TEST_SCENARIOS.md):**
    Hướng dẫn từng bước thực hiện 9 kịch bản demo kiểm thử thực tế qua Swagger UI và Kafka UI (TOTP MFA, Hybrid RBAC, Kick Session, Reuse Detection, Audit Trail, Tier Guardrails, Outbox Kafka).
-3. 📋 **[TEST_CASES.md (Automated Test Cases & GAP Analysis)](TEST_CASES.md):**
+3. 📋 **[TEST_CASES.md (Automated Test Cases & GAP Analysis)](docs/TEST_CASES.md):**
    Đặc tả chi tiết 110 test cases tự động, đối sánh mã lỗi HTTP và bảng phân tích nợ kỹ thuật (GAPs).
-4. ⚙️ **[KAFKA_PLAN.md (Transactional Outbox & Kafka Architecture)](KAFKA_PLAN.md):**
+4. ⚙️ **[KAFKA_PLAN.md (Transactional Outbox & Kafka Architecture)](docs/KAFKA_PLAN.md):**
    Kiến trúc chi tiết về luồng chống Dual-Write, định dạng Avro, Confluent Schema Registry và thuật toán Polling `FOR UPDATE SKIP LOCKED`.

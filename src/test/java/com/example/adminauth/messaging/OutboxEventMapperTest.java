@@ -36,7 +36,7 @@ class OutboxEventMapperTest {
                 .setUserAgent("TestAgent/1.0")
                 .setCorrelationId("corr-abc-123")
                 .setOccurredAt(now)
-                .setServiceName("admin-auth-service")
+                .setServiceName("ae-admin-auth-service")
                 .build();
 
         String json = mapper.toJson(original);
@@ -60,7 +60,7 @@ class OutboxEventMapperTest {
         assertThat(result.getUserAgent()).isEqualTo("TestAgent/1.0");
         assertThat(result.getCorrelationId()).isEqualTo("corr-abc-123");
         assertThat(result.getOccurredAt()).isEqualTo(now);
-        assertThat(result.getServiceName()).isEqualTo("admin-auth-service");
+        assertThat(result.getServiceName()).isEqualTo("ae-admin-auth-service");
     }
 
     @Test
@@ -84,7 +84,7 @@ class OutboxEventMapperTest {
                 .setReason("New onboard")
                 .setOccurredAt(now)
                 .setCorrelationId("corr-xyz")
-                .setServiceName("admin-auth-service")
+                .setServiceName("ae-admin-auth-service")
                 .build();
 
         String json = mapper.toJson(original);
@@ -108,6 +108,6 @@ class OutboxEventMapperTest {
         assertThat(result.getActorUsername()).isEqualTo("superadmin");
         assertThat(result.getReason()).isEqualTo("New onboard");
         assertThat(result.getOccurredAt()).isEqualTo(now);
-        assertThat(result.getServiceName()).isEqualTo("admin-auth-service");
+        assertThat(result.getServiceName()).isEqualTo("ae-admin-auth-service");
     }
 }

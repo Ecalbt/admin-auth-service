@@ -12,9 +12,9 @@
     </parent>
 
     <groupId>com.example</groupId>
-    <artifactId>admin-auth-service</artifactId>
+    <artifactId>ae-admin-auth-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>admin-auth-service</name>
+    <name>ae-admin-auth-service</name>
     <description>Admin Authentication, Hybrid RBAC/PBAC and Session Management Service for OCB Auto-Earning</description>
 
     <properties>

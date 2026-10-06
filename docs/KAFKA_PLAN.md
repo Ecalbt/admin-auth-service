@@ -26,7 +26,7 @@ Service publishes **Audit/Log Event** và **Notification Event** lên Kafka làm
 ## 2. Kiến trúc
 
 ```
-admin-auth-service
+ae-admin-auth-service
   Business logic (cùng PostgreSQL transaction)
       │
       ├── ghi audit_events (nguồn sự thật, như hiện tại)
@@ -151,7 +151,7 @@ kafka-ui:
 | `eventId` | `string` (UUID) | **Idempotency** cho consumer (at-least-once → dedupe bắt buộc) |
 | `eventType` | `enum` | Phân loại event |
 | `occurredAt` | `long` (logicalType `timestamp-millis`) | Thời điểm nghiệp vụ (không phải thời điểm publish) |
-| `serviceName` | `string` = `"admin-auth-service"` | Truy vết đa service trên cùng bus |
+| `serviceName` | `string` = `"ae-admin-auth-service"` | Truy vết đa service trên cùng bus |
 | `correlationId` | `string` nullable | Từ MDC — truy vết end-to-end (R11) |
 
 Schemas đặt tại `src/main/avro/` (`AuditEventV1.avsc`, `NotificationEventV1.avsc`); codegen tạo POJO vào package `com.example.adminauth.event`. Đăng ký schema ra Dev ngay bước đầu để chốt contract **trước khi** viết consumer.

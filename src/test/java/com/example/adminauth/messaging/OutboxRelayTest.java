@@ -73,7 +73,7 @@ class OutboxRelayTest {
                 .setSeverity(EventSeverity.INFO)
                 .setActorId("actor-1")
                 .setOccurredAt(Instant.now())
-                .setServiceName("admin-auth-service")
+                .setServiceName("ae-admin-auth-service")
                 .build();
 
         when(outboxEventRepository.findPendingBatchForUpdateSkipLocked(any(LocalDateTime.class), eq(100)))
@@ -110,7 +110,7 @@ class OutboxRelayTest {
                 .setSeverity(EventSeverity.INFO)
                 .setActorId("actor-1")
                 .setOccurredAt(Instant.now())
-                .setServiceName("admin-auth-service")
+                .setServiceName("ae-admin-auth-service")
                 .build();
 
         when(outboxEventRepository.findPendingBatchForUpdateSkipLocked(any(LocalDateTime.class), eq(100)))
@@ -148,7 +148,7 @@ class OutboxRelayTest {
                 .setSeverity(EventSeverity.INFO)
                 .setActorId("actor-1")
                 .setOccurredAt(Instant.now())
-                .setServiceName("admin-auth-service")
+                .setServiceName("ae-admin-auth-service")
                 .build();
 
         when(outboxEventRepository.findPendingBatchForUpdateSkipLocked(any(LocalDateTime.class), eq(100)))

@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: admin-auth-postgres
+    container_name: ae-admin-auth-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-admin_auth_db}
@@ -19,7 +19,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: admin-auth-redis
+    container_name: ae-admin-auth-redis
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6380}:6379"
@@ -33,7 +33,7 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.6.1
-    container_name: admin-auth-kafka
+    container_name: ae-admin-auth-kafka
     restart: unless-stopped
     ports:
       - "${KAFKA_PORT:-9092}:9092"
@@ -57,7 +57,7 @@ services:
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.6.1
-    container_name: admin-auth-schema-registry
+    container_name: ae-admin-auth-schema-registry
     restart: unless-stopped
     ports:
       - "${SCHEMA_REGISTRY_PORT:-8082}:8081"
@@ -70,12 +70,12 @@ services:
 
   kafka-ui:
     image: ghcr.io/kafbat/kafka-ui:latest
-    container_name: admin-auth-kafka-ui
+    container_name: ae-admin-auth-kafka-ui
     restart: unless-stopped
     ports:
       - "127.0.0.1:${KAFKA_UI_PORT:-8090}:8080"
     environment:
-      KAFKA_CLUSTERS_0_NAME: admin-auth-dev
+      KAFKA_CLUSTERS_0_NAME: ae-admin-auth-dev
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
       KAFKA_CLUSTERS_0_DEFAULTKEYSERDE: String
