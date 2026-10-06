@@ -1,1024 +1,184 @@
 # Admin Auth Service — OCB Auto-Earning
 
-Service trung tâm **xác thực, phân quyền và quản lý phiên đăng nhập** cho hệ sinh thái **OCB Auto-Earning Admin Portal**.  
-Xây dựng bằng **Java 21**, **Spring Boot 3**, **PostgreSQL**, **Redis** và ký JWT bằng **RS256** (asymmetric key).
+Dịch vụ trung tâm **Quản lý Định danh, Xác thực, Phân quyền và Phiên đăng nhập (IAM)** cho Cổng quản trị **OCB Auto-Earning Admin Portal**.
+
+[![Java 21](https://img.shields.io/badge/Java-21-orange.svg)](https://openjdk.org/projects/jdk/21/)
+[![Spring Boot 3.3.4](https://img.shields.io/badge/Spring%20Boot-3.3.4-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7-red.svg)](https://redis.io/)
+[![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-7.6.1-black.svg)](https://kafka.apache.org/)
+[![License](https://img.shields.io/badge/Status-Active-success.svg)]()
 
 ---
 
-## Mục lục
+## 📌 1. Giới thiệu & Vai trò
 
-1. [Kiến trúc hệ thống](#1-kiến-trúc-hệ-thống)
-2. [Hướng dẫn khởi chạy](#2-hướng-dẫn-khởi-chạy)
-3. [Tài khoản kiểm thử mặc định](#3-tài-khoản-kiểm-thử-mặc-định)
-4. [Luồng hoạt động của các API](#4-luồng-hoạt-động-của-các-api)
-5. [Danh sách API (API Specifications)](#5-danh-sách-api-api-specifications)
-6. [Chuẩn hóa Response & Mã lỗi](#6-chuẩn-hóa-response--mã-lỗi)
-7. [Thiết kế cơ sở dữ liệu](#7-thiết-kế-cơ-sở-dữ-liệu)
-8. [Bảo mật & Phân quyền](#8-bảo-mật--phân-quyền)
-9. [Chạy Tests](#9-chạy-tests)
-10. [Tech Stack](#10-tech-stack)
+Trong hệ sinh thái **OCB Auto-Earning**, `admin-auth-service` đóng vai trò là **Identity Provider (IdP) độc lập**:
+* **Tách rời nghiệp vụ Auth:** Các dịch vụ nội bộ downstream (như `system-params-api`, Auto-Earning Engine, Report Service...) **không tự lưu mật khẩu hay quản lý phiên**, mà hoàn toàn tin cậy vào chữ ký điện tử của service này.
+* **Xác minh phi tập trung (Decoupled Verification):** Downstream services tự động nạp public key qua endpoint `/.well-known/jwks.json` để thẩm định chữ ký JWT Access Token cục bộ với độ trễ nano-giây.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 Admin Portal (Web / BFF)                    │
+└──────────────┬───────────────────────────────┬──────────────┘
+               │ Đăng nhập / MFA / Session      │ Gọi API nghiệp vụ kèm JWT
+               ▼                               ▼
+    ┌──────────────────────┐        ┌──────────────────────┐
+    │  admin-auth-service  │        │  system-params-api   │
+    │   (IAM Trung tâm)    │        │  (Downstream Service)│
+    │                      │        │                      │
+    │ • JWT RS256 + JWKS   │        │ • Verify qua JWKS    │
+    │ • Hybrid RBAC/ABAC   │        │ • Kiểm tra Scopes    │
+    │ • TOTP MFA Onboarding│        │ • Maker-Checker rule │
+    │ • Outbox -> Kafka    │        └──────────▲───────────┘
+    └──────────┬───────────┘                   │ Tự verify public key
+               │ ─── Public Key (JWKS) ────────┘
+     ┌─────────┴─────────┐
+     ▼                   ▼
+┌──────────┐       ┌──────────┐       ┌──────────────────────┐
+│PostgreSQL│       │  Redis   │       │ Apache Kafka Cluster │
+│ (5433)   │       │  (6380)  │       │ Outbox Events (9092) │
+└──────────┘       └──────────┘       └──────────────────────┘
+```
+
+> 📖 **Lưu ý:** Để xem đặc tả chi tiết toàn bộ các luồng nghiệp vụ, cấu trúc bảng CSDL và danh sách đầy đủ 26 REST APIs, vui lòng xem tài liệu:
+> 👉 **[Tài liệu Đặc tả Yêu cầu Phần mềm (SRS.md)](SRS.md)**
 
 ---
 
-## 1. Kiến trúc hệ thống
+## 🚀 2. Các Tính năng Cốt lõi (Key Features)
 
-### 1.1. Vai trò trong hệ sinh thái
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    Admin Portal (Frontend)                   │
-└──────────────────┬──────────────────────┬────────────────────┘
-                   │                      │
-          Login/MFA/Session        API nghiệp vụ + JWT
-                   │                      │
-    ┌──────────────▼──────────┐    ┌──────▼──────────────────┐
-    │   admin-auth-service    │    │   system-params-api     │
-    │   (IAM chủ chốt)       │    │   ae-engine, reports... │
-    │                         │    │                         │
-    │  • Xác thực (JWT RS256) │    │  Verify JWT bằng JWKS   │
-    │  • Hybrid RBAC/PBAC    │    │  Check permission+scope  │
-    │  • Session (Redis)      │    │  Enforce maker-checker   │
-    │  • MFA (TOTP)           │    │                         │
-    │  • Audit log            │    │                         │
-    └────────┬───────┬────────┘    └─────────────────────────┘
-             │       │
-     ┌───────▼┐  ┌───▼──────┐
-     │PostgreSQL│  │  Redis   │
-     │ (5433)  │  │  (6380)  │
-     └─────────┘  └──────────┘
-```
-
-- **IAM chủ chốt**: Cấp JWT cho toàn bộ service. Các microservice khác verify token bằng endpoint `/.well-known/jwks.json`.
-- **Tách auth khỏi service nghiệp vụ**: Service nghiệp vụ chỉ verify JWT + kiểm tra permission/scope, không quản lý password hay session.
-
-### 1.2. Kiến trúc phân tầng (Layered Architecture)
-
-Dự án được tổ chức theo kiến trúc **4 tầng** chuẩn mực, áp dụng **DTO Pattern** (không expose Entity ra ngoài Controller):
-
-| Tầng | Trách nhiệm | Package |
-|------|-------------|---------|
-| **Controller** | Tiếp nhận HTTP Request, `@Valid`, `@PreAuthorize`, trả `ApiResponse<T>` | `controller/` |
-| **Service** | Business Logic, security guardrails, session management | `service/` (interface) + `service/impl/` |
-| **Mapper** | Chuyển đổi Entity ↔ DTO | `mapper/` |
-| **Repository** | Spring Data JPA thao tác PostgreSQL | `repository/` |
-| **Entity** | Ánh xạ bảng cơ sở dữ liệu | `entity/` |
-
-```
-Controller ──▶ Service Interface ──▶ Service Impl ──▶ Repository
-                                          │
-                                      Mapper (Entity ↔ DTO)
-```
+* **Xác thực An toàn & Ký số Bất đối xứng (RS256):** Access Token (TTL 30 phút) được ký bằng cặp khóa RSA 2048-bit, công bố Public Key chuẩn RFC 7517 qua JWKS.
+* **Xác thực 2 bước Bắt buộc (Mandatory TOTP MFA Onboarding):** 100% tài khoản mới bắt buộc quét mã QR Google Authenticator, đổi mật khẩu lần đầu và nhận 10 mã dự phòng (Backup Codes).
+* **Quản lý Phiên tập trung & Kick Session từ xa:** Lưu trữ trạng thái phiên trên Redis (TTL 30m idle timeout). Hỗ trợ xem danh sách thiết bị và thu hồi phiên (Kick session) tức thì.
+* **Xoay vòng Refresh Token & Chống Đánh cắp (Reuse Detection):** Mỗi token chỉ dùng một lần (One-time use). Nếu phát hiện token cũ bị dùng lại (Replay Attack) $\rightarrow$ Tự động thu hồi toàn bộ Token Family và kick toàn bộ phiên.
+* **Phân quyền Lai (Hybrid RBAC / ABAC Scoping):** Quản lý Role (Tier + Preset) kết hợp gán trực tiếp Custom Grants kèm `scopes` theo từng microservice cụ thể.
+* **Hàng rào Bảo mật Thứ bậc (Tier Guardrails):** Ngăn chặn triệt để hành vi leo thang đặc quyền (Tier 1 SUPERADMIN > Tier 2 OPERATIONS_ADMIN > Tier 3 SERVICE_ADMIN).
+* **Transactional Outbox Pattern & Kafka Event Streaming:** Mọi sự kiện Kiểm toán (Audit) và Thông báo (Notification) được ghi nguyên tử vào bảng `outbox_events` (PostgreSQL) và relay nền lên **Apache Kafka** với **Avro Schema Registry** (`SKIP LOCKED`).
 
 ---
 
-## 2. Hướng dẫn khởi chạy
+## 🛠️ 3. Hướng dẫn Khởi chạy Nhanh (Quick Start)
 
-### Yêu cầu môi trường
-- **JDK 21**
-- **Maven 3.9+**
-- **Docker Desktop**
+### Yêu cầu cài đặt
+* **JDK 21 LTS**
+* **Maven 3.9+**
+* **Docker Desktop** (hoặc Docker Engine & Docker Compose v2)
 
-### Bước 1: Khởi động Database & Cache
+---
 
-Mở terminal tại thư mục dự án và chạy:
+### Bước 1: Khởi động Hạ tầng Docker (Postgres, Redis, Kafka, Schema Registry, Kafka UI)
+
+Chạy lệnh sau tại thư mục gốc của dự án:
 ```powershell
 docker-compose up -d
 ```
-> Lệnh này sẽ khởi động **PostgreSQL** (port `5433`) và **Redis** (port `6380`).
 
-### Bước 2: Chạy ứng dụng Spring Boot
-
+Kiểm tra trạng thái các container:
 ```powershell
-mvn spring-boot:run -Dspring-boot.run.profiles=dev
+docker-compose ps
 ```
-
-Hoặc chạy trực tiếp class `AdminAuthServiceApplication.java` trong IntelliJ IDEA.
-
-Ứng dụng sẽ chạy tại cổng **`8081`** với context-path là **`/api`**.
-
-### Bước 3: Truy cập Swagger UI
-
-👉 **URL:** [http://localhost:8081/api/swagger-ui/index.html](http://localhost:8081/api/swagger-ui/index.html)
-
-> Sau khi gọi API Login, lấy chuỗi `accessToken` bấm vào nút **Authorize** ở góc trên phải để test các API yêu cầu quyền.
+Hệ thống sẽ chạy các container dịch vụ:
+* **PostgreSQL:** Port `5433` (Database: `admin_auth_db`, user: `admin_user`, pass: `admin_password`)
+* **Redis:** Port `6380`
+* **Apache Kafka (KRaft mode):** Port `9092`
+* **Confluent Schema Registry:** Port `8082` (nội bộ container `8081`)
+* **Kafka UI (Kafbat):** Port `8090`
 
 ---
 
-## 3. Tài khoản kiểm thử mặc định
+### Bước 2: Khởi động Ứng dụng Backend
 
-Flyway đã nạp sẵn **4 tài khoản** để phục vụ kiểm thử:
+```powershell
+mvn spring-boot:run
+```
 
-| Tài khoản | Username | Password | Role | Tier | Mô tả |
+Ứng dụng sẽ tự động chạy migration Flyway (`V1`, `V2`, `V3`) để tạo bảng và nạp dữ liệu mẫu ban đầu, sau đó lắng nghe tại cổng **`8081`** với context path là **`/api`**.
+
+---
+
+### Bước 3: Truy cập Giao diện Vận hành & Tài liệu API
+
+| Cổng thông tin | Địa chỉ truy cập | Ghi chú |
+|---|---|---|
+| **Swagger UI** | [http://localhost:8081/api/swagger-ui/index.html](http://localhost:8081/api/swagger-ui/index.html) | Thử nghiệm trực tiếp 26 REST APIs |
+| **OpenAPI Docs** | [http://localhost:8081/api/v3/api-docs](http://localhost:8081/api/v3/api-docs) | OpenAPI 3.0 JSON spec |
+| **JWKS Discovery** | [http://localhost:8081/api/.well-known/jwks.json](http://localhost:8081/api/.well-known/jwks.json) | Public keys để downstream verify |
+| **Kafka UI** | [http://localhost:8090](http://localhost:8090) | Giám sát Topics, Schemas, Messages |
+
+---
+
+## 👥 4. Tài khoản Kiểm thử Mặc định (Seed Accounts)
+
+Hệ thống đã nạp sẵn 4 tài khoản mẫu để phục vụ kiểm thử nhanh:
+
+| Tài khoản | Username | Mật khẩu mặc định | Role | Tier | Mục đích kiểm thử |
 |---|---|---|---|:---:|---|
-| **Super Admin** | `superadmin` | `SuperAdmin@123456` | `SUPERADMIN` | 1 | Quản trị tối cao, toàn quyền |
-| **Ops Admin** | `ops_admin` | `OpsAdmin@123456` | `OPERATIONS_ADMIN` | 2 | Quản trị viên ủy quyền |
+| **Super Admin** | `superadmin` | `SuperAdmin@123456` | `SUPERADMIN` | 1 | Quản trị tối cao, toàn quyền wildcard `*` |
+| **Ops Admin** | `ops_admin` | `OpsAdmin@123456` | `OPERATIONS_ADMIN` | 2 | Quản lý admin cấp dưới & kick session |
 | **Service Maker** | `svc_maker` | `Maker@123456` | `SERVICE_ADMIN` | 3 | Maker trên scope `system-params-api` |
-| **Service Checker** | `svc_checker` | `Checker@123456` | `SERVICE_ADMIN` | 3 | Checker trên scope `system-params-api` |
+| **Service Checker**| `svc_checker` | `Checker@123456` | `SERVICE_ADMIN` | 3 | Checker trên scope `system-params-api` |
 
 ---
 
-## 4. Luồng hoạt động của các API
-
-### 4.1. Luồng đăng nhập & Kích hoạt MFA bắt buộc (Login & Mandatory Onboarding)
-
-#### A. Luồng kích hoạt lần đầu (First-Time Login / Mandatory MFA Onboarding):
-Áp dụng cho mọi tài khoản mới tạo (trạng thái `PENDING_ACTIVATION` hoặc bắt buộc đổi mật khẩu):
+## 📂 5. Cấu trúc Thư mục Dự án (Project Structure)
 
 ```
-┌──────┐        ┌──────────────────┐        ┌──────┐        ┌──────┐
-│Client│        │ AuthController   │        │  DB  │        │Redis │
-└──┬───┘        └────────┬─────────┘        └──┬───┘        └──┬───┘
-   │  POST /v1/auth/login│                     │               │
-   │  {username, tempPassword}                 │               │
-   │─────────────────────▶│                     │               │
-   │                      │  Verify temp pass   │               │
-   │                      │  Kiểm tra:          │               │
-   │                      │  PENDING_ACTIVATION?│               │
-   │                      │───────────────────▶│               │
-   │                      │  Tạo onboardingToken│               │
-   │                      │  Lưu vào Redis (15m)│               │
-   │                      │  ─────────────────────────────────▶│
-   │                      │  Khởi tạo TOTP key  │               │
-   │◀─────────────────────│                     │               │
-   │  {onboardingRequired: true,                │               │
-   │   onboardingToken, totpSecretKey,          │               │
-   │   totpQrCodeUri}                           │               │
-   │                                            │               │
-   │  (Client quét QR vào Google Authenticator) │               │
-   │                                            │               │
-   │  POST /v1/auth/onboarding/complete         │               │
-   │  {onboardingToken, newPassword, totpCode}  │               │
-   │─────────────────────▶│                                    
-   │                      │  Verify OTP code    │               │
-   │                      │  Đổi mật khẩu mới   │               │
-   │                      │  confirmed = true   │               │
-   │                      │  status = ACTIVE    │               │
-   │                      │  Sinh 10 backup code│               │
-   │                      │────────────────────▶│               
-   │                      │  Hủy onboardingToken│               │
-   │                      │  Tạo session chính  │               │
-   │                      │  ─────────────────────────────────▶ |
-   │                      │  Ký JWT (mfa_verified: true)        │
-   │◀─────────────────────│                     │               │
-   │  {accessToken, refreshToken,               │               │
-   │   roles, permissions, backupCodes: [...]}  │               │
-```
-
-#### B. Luồng đăng nhập định kỳ (Regular Login có MFA):
-Áp dụng cho các lần đăng nhập tiếp theo sau khi tài khoản đã kích hoạt:
-
-```
-┌──────┐        ┌──────────────────┐        ┌──────┐        ┌──────┐
-│Client│        │ AuthController   │        │  DB  │        │Redis │
-└──┬───┘        └────────┬─────────┘        └──┬───┘        └──┬───┘
-   │  POST /v1/auth/login│                     │               │
-   │  {username, password}                     │               │
-   │─────────────────────▶│                     │               │
-   │                      │  Verify password    │               │
-   │                      │  Tài khoản ACTIVE,  │               │
-   │                      │  MFA đã bật         │               │
-   │◀─────────────────────│                     │               │
-   │  {mfaRequired: true, mfaToken: "..."}      │               │
-   │                                            │               │
-   │  POST /v1/auth/mfa/verify                  │               │
-   │  {mfaToken, totpCode}                      │               │
-   │─────────────────────▶│                     │               │
-   │                      │  Verify TOTP code   │               │
-   │                      │  Tạo session (sid)  │               │
-   │                      │  ─────────────────────────────────▶│
-   │                      │  Ký JWT RS256       │               │
-   │◀─────────────────────│                     │               │
-   │  {accessToken, refreshToken, roles, permissions}           │
-```
-
-**Tóm tắt quy tắc:**
-1. **Tài khoản mới:** Bắt buộc Onboarding liên hoàn (Đổi mật khẩu tạm + Cài đặt & Xác nhận TOTP 6 số) $\rightarrow$ Tuyệt đối không cấp Access Token nếu chưa hoàn tất MFA.
-2. **Đăng nhập định kỳ:** Luôn đi qua 2 bước (Mật khẩu $\rightarrow$ OTP 6 số).
-3. **Lockout:** Nhập sai mật khẩu 5 lần liên tiếp $\rightarrow$ Khóa tài khoản 30 phút.
-
----
-
-### 4.2. Luồng Refresh Token (Rotation + Reuse Detection)
-
-```
-┌──────┐        ┌──────────────────┐        ┌──────┐        ┌──────┐
-│Client│        │ AuthController   │        │  DB  │        │Redis │
-└──┬───┘        └────────┬─────────┘        └──┬───┘        └──┬───┘
-   │  POST /v1/auth/refresh                    │               │
-   │  {refreshToken: "RT_old"}                 │               │
-   │──────────────────────▶│                    │               │
-   │                       │  Hash(RT_old) →   │               │
-   │                       │  tìm trong DB     │               │
-   │                       │──────────────────▶│               │
-   │                       │                    │               │
-   │        ┌──────────────┤                    │               │
-   │        │ Token hợp lệ?│                    │               │
-   │        └──┬───────────┘                    │               │
-   │           │                                │               │
-   │     [HỢP LỆ - chưa dùng]                  │               │
-   │           │  Revoke RT_old                 │               │
-   │           │  Tạo RT_new (cùng family_id)   │               │
-   │           │  Ký Access Token mới           │               │
-   │           │──────────────────────────────▶│               │
-   │◀──────────│  {accessToken, refreshToken}   │               │
-   │           │                                │               │
-   │     [ĐÃ DÙNG RỒI → REUSE DETECTED!]       │               │
-   │           │  ⚠️ Nghi ngờ token bị đánh cắp │               │
-   │           │  Thu hồi TOÀN BỘ family        │               │
-   │           │  Xóa session trên Redis ───────────────────── ▶│
-   │◀──────────│  HTTP 401: Token reuse detected│               │
-```
-
-**Tóm tắt:**
-1. Mỗi lần refresh → **rotate**: cấp `refreshToken` mới, vô hiệu token cũ.
-2. Nếu token cũ đã bị vô hiệu mà bị gửi lại → **Reuse Detection**: thu hồi toàn bộ family → xóa session Redis → bắt buộc đăng nhập lại.
-3. Refresh token hết hạn sau **24 giờ** (absolute lifetime).
-
----
-
-### 4.3. Luồng tạo tài khoản Admin (Tier Guardrail + Hybrid Permission)
-
-```
-┌──────────┐      ┌──────────────────┐      ┌──────┐
-│SUPERADMIN│      │ AdminController  │      │  DB  │
-│hoặc OPS  │      │                  │      │      │
-└────┬─────┘      └────────┬─────────┘      └──┬───┘
-     │  POST /v1/admins              │          │
-     │  {username, email, roleCode,  │          │
-     │   customGrants: [...]}        │          │
-     │──────────────────────▶│                  │
-     │                       │                  │
-     │     ┌─────────────────┤                  │
-     │     │ @PreAuthorize   │                  │
-     │     │ 'admin:create'  │                  │
-     │     └────┬────────────┘                  │
-     │          │                               │
-     │     ┌────▼────────────────────┐          │
-     │     │ Tier Guardrail Check:   │          │
-     │     │ • SUPERADMIN → tạo mọi │          │
-     │     │   tier kể cả OPS_ADMIN │          │
-     │     │ • OPS_ADMIN → chỉ tạo  │          │
-     │     │   tier 3+ (SERVICE,    │          │
-     │     │   THIRD_PARTY, AUDITOR)│          │
-     │     │ → Vi phạm? HTTP 403    │          │
-     │     └────┬────────────────────┘          │
-     │          │                               │
-     │          │  1. Tạo Admin (status=PENDING_ACTIVATION)
-     │          │  2. Gán role (admin_roles)     │
-     │          │  3. Load preset permissions từ role
-     │          │  4. Merge customGrants (thêm/bớt)
-     │          │  5. Lưu admin_permissions      │
-     │          │──────────────────────────────▶│
-     │          │                               │
-     │◀─────────│  AdminDetailDto               │
-     │          │  (kèm roles + permissions)    │
-```
-
-**Tóm tắt:**
-1. Người tạo (`SUPERADMIN` hoặc `OPERATIONS_ADMIN`) gọi `POST /v1/admins` với `roleCode` và tùy chọn `customGrants`.
-2. **Tier Guardrail**: `OPERATIONS_ADMIN` không thể tạo SUPERADMIN/OPERATIONS_ADMIN — chỉ tier 3+ trở xuống.
-3. Hệ thống **preload** bộ preset permission mặc định từ role, rồi merge `customGrants` (thêm/bớt quyền).
-4. Tài khoản mới có trạng thái `PENDING_ACTIVATION` + `mustChangePassword=true` → lần đầu đăng nhập phải đổi mật khẩu.
-
----
-
-### 4.4. Luồng đổi mật khẩu & Reset mật khẩu
-
-```
-┌──────┐        ┌──────────────────┐        ┌──────┐        ┌──────┐
-│Admin │        │  MeController /  │        │  DB  │        │Redis │
-│      │        │  AdminController │        │      │        │      │
-└──┬───┘        └────────┬─────────┘        └──┬───┘        └──┬───┘
-   │                      │                     │               │
-   │ ═══ TỰ ĐỔI (POST /v1/me/password) ═══    │               │
-   │  {oldPassword, newPassword}                │               │
-   │──────────────────────▶│                     │               │
-   │                       │  Verify oldPassword│               │
-   │                       │  Check complexity  │               │
-   │                       │  Check 5 password  │               │
-   │                       │  history (không    │               │
-   │                       │  trùng gần nhất)   │               │
-   │                       │  Lưu hash mới      │               │
-   │                       │──────────────────▶│               │
-   │                       │  Thu hồi TẤT CẢ   │               │
-   │                       │  session khác ──────────────────▶│
-   │◀──────────────────────│  "Password changed"│               │
-   │                       │                     │               │
-   │ ═══ RESET BỞI QUẢN TRỊ (POST /v1/admins/{id}/reset-password) ═
-   │                       │                     │               │
-   │  SUPERADMIN/OPS gọi   │                     │               │
-   │──────────────────────▶│                     │               │
-   │                       │  Tier guardrail     │               │
-   │                       │  Tạo password tạm  │               │
-   │                       │  mustChangePassword │               │
-   │                       │  = true             │               │
-   │                       │──────────────────▶│               │
-   │                       │  Thu hồi TẤT CẢ   │               │
-   │                       │  session ───────────────────────▶│
-   │◀──────────────────────│  {temporaryPassword}│              │
-```
-
-**Tóm tắt:**
-- **Tự đổi** (`POST /v1/me/password`): Kiểm tra mật khẩu cũ + complexity + lịch sử 5 lần gần nhất → thu hồi tất cả session khác.
-- **Reset bởi quản trị** (`POST /v1/admins/{id}/reset-password`): SUPERADMIN/OPS_ADMIN reset → cấp mật khẩu tạm → đánh dấu `mustChangePassword=true` → thu hồi toàn bộ session ngay lập tức.
-
----
-
-### 4.5. Luồng gán/thay đổi quyền (Permission Snapshot & Session Revocation)
-
-```
-┌──────────┐      ┌──────────────────┐      ┌──────┐      ┌──────┐
-│SUPERADMIN│      │ AdminController  │      │  DB  │      │Redis │
-└────┬─────┘      └────────┬─────────┘      └──┬───┘      └──┬───┘
-     │  PUT /v1/admins/{id}/roles              │             │
-     │  {roleCodes, customGrants}              │             │
-     │──────────────────────▶│                  │             │
-     │                       │  Tier guardrail  │             │
-     │                       │  Xóa role cũ     │             │
-     │                       │  Gán role mới    │             │
-     │                       │  Xóa grants cũ   │             │
-     │                       │  Preload preset   │             │
-     │                       │  Merge customGrants│            │
-     │                       │  Lưu grants mới  │             │
-     │                       │─────────────────▶│             │
-     │                       │                  │             │
-     │                       │  ⚠️ Permission snapshot thay đổi
-     │                       │  → Token cũ CÒN QUYỀN CŨ      │
-     │                       │  → Phải thu hồi toàn bộ session│
-     │                       │  ──────────────────────────────▶│
-     │                       │  Xóa tất cả session:{admin_id} │
-     │                       │                  │             │
-     │◀──────────────────────│  AdminDetailDto  │             │
-     │                       │  (quyền đã cập nhật)           │
-```
-
-**Tóm tắt:**
-- Permission nhúng trong JWT là **bản chụp (snapshot)** tại thời điểm đăng nhập.
-- Khi thay đổi role/permission → **thu hồi toàn bộ session** trên Redis → admin đó phải đăng nhập lại để nhận token mới với permission cập nhật.
-- Đây là cơ chế bảo mật quan trọng: đảm bảo quyền bị gỡ sẽ **có hiệu lực tức thì**.
-
----
-
-### 4.6. Luồng quản lý phiên đăng nhập (Session Management)
-
-```
-┌──────────┐      ┌──────────────────┐      ┌──────┐
-│  Admin   │      │ MeController /   │      │Redis │
-│          │      │ AdminController  │      │      │
-└────┬─────┘      └────────┬─────────┘      └──┬───┘
-     │                      │                   │
-     │ ═══ XEM SESSION CỦA MÌNH ═══            │
-     │  GET /v1/me/sessions │                   │
-     │──────────────────────▶│                   │
-     │                       │  Lấy tất cả      │
-     │                       │  session:*:{id}  │
-     │                       │─────────────────▶│
-     │◀──────────────────────│  [{sid, ip,       │
-     │                       │    userAgent,     │
-     │                       │    lastUsed}]     │
-     │                      │                   │
-     │ ═══ KICK 1 SESSION CỦA MÌNH ═══         │
-     │  DELETE /v1/me/sessions/{sid}            │
-     │──────────────────────▶│                   │
-     │                       │  Xóa session:{sid}│
-     │                       │─────────────────▶│
-     │◀──────────────────────│  "Session revoked"│
-     │                      │                   │
-     │ ═══ QUẢN TRỊ XEM/KICK SESSION CỦA NGƯỜI KHÁC ═══
-     │  GET    /v1/admins/{id}/sessions         │
-     │  DELETE /v1/admins/{id}/sessions/{sid}    │
-     │  DELETE /v1/admins/{id}/sessions          │
-     │──────────────────────▶│                   │
-     │                       │  Tier guardrail   │
-     │                       │  (chỉ cấp dưới)  │
-     │                       │─────────────────▶│
-     │◀──────────────────────│  OK / Revoked     │
-```
-
-**Tóm tắt:**
-- Mọi admin đều có thể xem và kick session **của chính mình** qua `/v1/me/sessions`.
-- `SUPERADMIN` xem/kick session của **tất cả** admin.
-- `OPERATIONS_ADMIN` xem/kick session của **chỉ admin cấp dưới** (tier 3+).
-- Giới hạn tối đa **5 session đồng thời** / admin (cấu hình được).
-
----
-
-### 4.7. Luồng bật MFA (TOTP)
-
-```
-┌──────┐        ┌──────────────────┐        ┌──────┐
-│Admin │        │  MeController    │        │  DB  │
-└──┬───┘        └────────┬─────────┘        └──┬───┘
-   │                      │                     │
-   │ Bước 1: Khởi tạo TOTP                     │
-   │  POST /v1/me/mfa/totp/setup               │
-   │──────────────────────▶│                     │
-   │                       │  Tạo TOTP secret   │
-   │                       │  Lưu vào DB (chưa confirm)
-   │                       │──────────────────▶│
-   │◀──────────────────────│                     │
-   │  {secretKey,           │                    │
-   │   qrCodeUri}           │                    │
-   │                       │                     │
-   │ → Admin quét QR bằng Google Authenticator   │
-   │                       │                     │
-   │ Bước 2: Xác nhận kích hoạt                 │
-   │  POST /v1/me/mfa/totp/enable               │
-   │  {code: "123456"}     │                     │
-   │──────────────────────▶│                     │
-   │                       │  Verify TOTP code   │
-   │                       │  confirmed = true   │
-   │                       │  Tạo 10 backup codes│
-   │                       │──────────────────▶│
-   │◀──────────────────────│                     │
-   │  {backupCodes: [...]}  │                    │
-   │  ⚠️ Lưu lại backup codes, chỉ hiển thị 1 lần!
+admin-auth-service/
+├── src/main/
+│   ├── avro/                               # Định nghĩa schema Apache Avro (.avsc)
+│   │   ├── AuditEventV1.avsc
+│   │   └── NotificationEventV1.avsc
+│   ├── java/com/example/adminauth/
+│   │   ├── controller/                     # REST Controllers (Auth, Admin, Me, Catalog, Audit, JWKS)
+│   │   ├── service/                        # Interfaces & Implementations (Auth, Admin, Session, MFA...)
+│   │   ├── messaging/                      # Outbox Relay (SKIP LOCKED), Publisher, Cleaner
+│   │   ├── security/                       # Custom Evaluator (@authz), JWT Provider, Session Filter
+│   │   ├── repository/                     # Spring Data JPA Repositories
+│   │   ├── entity/                         # Hibernate JPA Entities & OutboxStatus
+│   │   ├── dto/                            # Data Transfer Objects phân theo domain
+│   │   └── exception/                      # Global Exception Handler & Business Exceptions
+│   └── resources/
+│       ├── application.properties          # Cấu hình Database, Redis, Kafka, JWT, Outbox
+│       └── db/migration/                   # Flyway Migrations (V1 Schema, V2 Seed, V3 Outbox)
+├── docker-compose.yml                      # Định nghĩa cụm hạ tầng Postgres, Redis, Kafka, Schema Reg, UI
+├── SRS.md                                  # Tài liệu Đặc tả Yêu cầu Phần mềm chuẩn IEEE 830
+├── TEST_SCENARIOS.md                       # Hướng dẫn 9 Kịch bản kiểm thử End-to-End
+├── TEST_CASES.md                           # 110 Test Cases tự động & danh mục GAP kỹ thuật
+├── KAFKA_PLAN.md                           # Thiết kế chi tiết Transactional Outbox & Event Streaming
+└── pom.xml                                 # Cấu hình dependencies & Avro Maven Plugin
 ```
 
 ---
 
-### 4.8. Luồng xác minh token tại Microservice con (JWKS)
+## 🧪 6. Kiểm thử Tự động (Automated Testing)
 
-```
-┌──────┐   ┌───────────────────┐   ┌─────────────────────┐
-│Client│   │ system-params-api │   │ admin-auth-service  │
-└──┬───┘   └────────┬──────────┘   └──────────┬──────────┘
-   │  API request    │                         │
-   │  Authorization: │                         │
-   │  Bearer <JWT>   │                         │
-   │────────────────▶│                         │
-   │                 │  Lần đầu: Lấy public key│
-   │                 │  GET /.well-known/jwks.json
-   │                 │────────────────────────▶│
-   │                 │  RSA Public Key (cache)  │
-   │                 │◀────────────────────────│
-   │                 │                         │
-   │                 │  Verify JWT signature    │
-   │                 │  (stateless, không gọi  │
-   │                 │   auth service nữa)     │
-   │                 │                         │
-   │                 │  @authz.hasPerm(         │
-   │                 │    'config:write',       │
-   │                 │    'system-params-api')  │
-   │                 │                         │
-   │                 │  Kiểm tra mảng permissions│
-   │                 │  trong JWT claims        │
-   │                 │  → {perm, scope} match?  │
-   │◀────────────────│                         │
-   │  Response       │                         │
-```
+Dự án sở hữu bộ kiểm thử tự động gồm **109 Unit & Integration Tests** bao phủ toàn bộ các tầng Service, Repository, JWT, Redis Session và Outbox Relay.
 
-**Tóm tắt:**
-- Microservice con tải RSA public key từ `/.well-known/jwks.json` **(chỉ 1 lần, cache lại)**.
-- Verify JWT hoàn toàn **stateless** — không cần gọi auth service mỗi request.
-- Dùng `@authz.hasPerm(permission, serviceId)` — Custom Security Evaluator kiểm tra mảng `permissions` trong JWT claims.
-- `SUPERADMIN` có `{"perm": "*", "scope": ["*"]}` → bypass mọi check.
-
----
-
-## 5. Danh sách API (API Specifications)
-
-### 5.1. Nhóm API Xác thực (Authentication) — Public
-
-| Method | Endpoint | Mô tả |
-|:---:|---|---|
-| `POST` | `/v1/auth/login` | Bước 1: Đăng nhập (nhận JWT, MFA challenge, hoặc Onboarding challenge) |
-| `POST` | `/v1/auth/onboarding/mfa/setup` | Onboarding: Lấy lại QR & Secret TOTP bằng onboarding token |
-| `POST` | `/v1/auth/onboarding/complete` | Onboarding: Đổi mật khẩu + xác nhận OTP 6 số $\rightarrow$ Kích hoạt tài khoản |
-| `POST` | `/v1/auth/mfa/verify` | Bước 2: Xác thực MFA (TOTP hoặc backup code) |
-| `POST` | `/v1/auth/password/forgot` | Quên mật khẩu: Yêu cầu cấp resetToken qua TOTP |
-| `POST` | `/v1/auth/password/reset` | Quên mật khẩu: Xác thực OTP 6 số (hoặc backup code) + đặt mật khẩu mới |
-| `POST` | `/v1/auth/refresh` | Rotate refresh token, cấp access token mới |
-| `POST` | `/v1/auth/logout` | Đăng xuất, thu hồi session hiện tại |
-| `GET`  | `/.well-known/jwks.json` | Public key cho các service verify JWT |
-
-**Body Login (`POST /v1/auth/login`):**
-```json
-{
-  "username": "demo_maker",
-  "password": "TemporaryRandomPassword@123"
-}
-```
-
-**Response — Tài khoản mới cần Onboarding bắt buộc (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Login evaluated",
-  "data": {
-    "mfaRequired": false,
-    "onboardingRequired": true,
-    "onboardingToken": "9a8b7c6d-5e4f...:adm-uuid-123",
-    "totpSecretKey": "JBSWY3DPEHPK3PXP...",
-    "totpQrCodeUri": "otpauth://totp/OCB-AutoEarning-Admin:demo_maker?secret=JBSWY3DPEHPK3PXP...&issuer=OCB-AutoEarning-Admin",
-    "username": "demo_maker",
-    "fullName": "Nguyen Van Demo",
-    "mustChangePassword": true
-  }
-}
-```
-
-**Body Hoàn tất Onboarding (`POST /v1/auth/onboarding/complete`):**
-```json
-{
-  "onboardingToken": "9a8b7c6d-5e4f...:adm-uuid-123",
-  "newPassword": "NewSecurePassword@123456",
-  "totpCode": 482910
-}
-```
-
-**Response — Kích hoạt thành công & Cấp Access Token + 10 Backup Codes (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Onboarding completed successfully. Account is now active with MFA enabled.",
-  "data": {
-    "mfaRequired": false,
-    "onboardingRequired": false,
-    "accessToken": "eyJhbGciOiJSUzI1NiJ9...",
-    "refreshToken": "dGhpcyBpcyBhIHJl...",
-    "expiresIn": 1800,
-    "adminId": "adm-uuid-123",
-    "username": "demo_maker",
-    "fullName": "Nguyen Van Demo",
-    "mustChangePassword": false,
-    "roles": ["SERVICE_ADMIN"],
-    "permissions": [
-      {"perm": "config:read", "scope": ["system-params-api"]},
-      {"perm": "config:write", "scope": ["system-params-api"]},
-      {"perm": "auth:self", "scope": ["*"]}
-    ],
-    "backupCodes": [
-      "A1B2C3D4", "E5F6G7H8", "I9J0K1L2", "M3N4O5P6", "Q7R8S9T0",
-      "U1V2W3X4", "Y5Z6A7B8", "C9D0E1F2", "G3H4I5J6", "K7L8M9N0"
-    ]
-  }
-}
-```
-
-**Response — Đăng nhập định kỳ có MFA (`POST /v1/auth/login`):**
-```json
-{
-  "success": true,
-  "message": "Login evaluated",
-  "data": {
-    "mfaRequired": true,
-    "mfaToken": "eyJhbGciOiJSUzI1NiJ9..."
-  }
-}
-```
-
-**Body MFA Verify (`POST /v1/auth/mfa/verify`):**
-```json
-{
-  "mfaToken": "eyJhbGciOiJSUzI1NiJ9...",
-  "totpCode": "123456"
-}
-```
-
-**Body Refresh (`POST /v1/auth/refresh`):**
-```json
-{
-  "refreshToken": "dGhpcyBpcyBhIHJl..."
-}
-```
-
-**Body Yêu cầu Quên mật khẩu (`POST /v1/auth/password/forgot`):**
-```json
-{
-  "username": "ops_demo"
-}
-```
-
-**Response — Cấp Reset Token (`200 OK`):**
-```json
-{
-  "success": true,
-  "message": "Reset token issued",
-  "data": {
-    "resetToken": "a1b2c3d4...:adm-uuid-123",
-    "method": "TOTP",
-    "message": "Please submit the 6-digit TOTP code from your authenticator app along with your new password to complete the reset process."
-  }
-}
-```
-
-**Body Đặt lại mật khẩu bằng mã TOTP (`POST /v1/auth/password/reset`):**
-```json
-{
-  "resetToken": "a1b2c3d4...:adm-uuid-123",
-  "totpCode": "482910",
-  "newPassword": "NewSecurePassword@2026"
-}
-```
-
-**Response (`200 OK`):**
-```json
-{
-  "success": true,
-  "message": "Password reset successfully. Please login with your new password."
-}
-```
-
----
-
-### 5.2. Nhóm API Tự phục vụ (Self-Service) — Mọi admin đã đăng nhập
-
-*Yêu cầu Header:* `Authorization: Bearer <ACCESS_TOKEN>`
-
-| Method | Endpoint | Mô tả |
-|:---:|---|---|
-| `GET` | `/v1/me` | Xem thông tin tài khoản + roles + permissions |
-| `POST` | `/v1/me/password` | Đổi mật khẩu (cần mật khẩu cũ) |
-| `POST` | `/v1/me/mfa/totp/setup` | Khởi tạo TOTP MFA (trả secret + QR URI) |
-| `POST` | `/v1/me/mfa/totp/enable` | Xác nhận kích hoạt TOTP (trả 10 backup codes) |
-| `GET` | `/v1/me/sessions` | Xem danh sách session đang hoạt động |
-| `DELETE` | `/v1/me/sessions/{sid}` | Kick 1 session cụ thể |
-| `DELETE` | `/v1/me/sessions` | Kick tất cả session |
-
-**Body đổi mật khẩu (`POST /v1/me/password`):**
-```json
-{
-  "oldPassword": "SuperAdmin@123456",
-  "newPassword": "NewSecurePass@2026"
-}
-```
-
-**Body kích hoạt TOTP (`POST /v1/me/mfa/totp/enable`):**
-```json
-{
-  "code": "123456"
-}
-```
-
----
-
-### 5.3. Nhóm API Quản lý Admin — Yêu cầu `admin:*` permissions
-
-*Yêu cầu Header:* `Authorization: Bearer <ACCESS_TOKEN>`
-
-| Method | Endpoint | Permission | Mô tả |
-|:---:|---|:---:|---|
-| `POST` | `/v1/admins` | `admin:create` | Tạo tài khoản admin mới |
-| `GET` | `/v1/admins` | `admin:read` | Danh sách admin (phân trang) |
-| `GET` | `/v1/admins/{id}` | `admin:read` | Chi tiết admin (roles + permissions) |
-| `PATCH` | `/v1/admins/{id}` | `admin:update` | Cập nhật thông tin (email, fullName) |
-| `POST` | `/v1/admins/{id}/disable` | `admin:disable` | Vô hiệu hóa + thu hồi toàn bộ session |
-| `POST` | `/v1/admins/{id}/enable` | `admin:enable` | Kích hoạt lại tài khoản |
-| `POST` | `/v1/admins/{id}/reset-password` | `admin:reset_password` | Reset mật khẩu (cấp mật khẩu tạm) |
-| `PUT` | `/v1/admins/{id}/roles` | `admin:assign_role` | Gán/thay đổi roles + permissions |
-
-**Body tạo admin (`POST /v1/admins`):**
-```json
-{
-  "username": "new_maker",
-  "email": "new_maker@ocb.com.vn",
-  "fullName": "Nguyen Van A",
-  "initialPassword": "InitialPass@123",
-  "roleCode": "SERVICE_ADMIN",
-  "customGrants": [
-    { "permissionCode": "config:read", "scopes": ["system-params-api"] },
-    { "permissionCode": "config:write", "scopes": ["system-params-api"] }
-  ]
-}
-```
-
-**Body gán role (`PUT /v1/admins/{id}/roles`):**
-```json
-{
-  "roleCodes": ["SERVICE_ADMIN"],
-  "customGrants": [
-    { "permissionCode": "config:read", "scopes": ["system-params-api"] },
-    { "permissionCode": "config:approve", "scopes": ["system-params-api"] }
-  ]
-}
-```
-
-**Response reset password:**
-```json
-{
-  "success": true,
-  "message": "Password reset successfully",
-  "data": {
-    "temporaryPassword": "TmpPass@abc123"
-  },
-  "timestamp": "2026-09-22T09:00:00Z"
-}
-```
-
----
-
-### 5.4. Nhóm API Quản lý Session của Admin khác — Yêu cầu `session:*` permissions
-
-| Method | Endpoint | Permission | Mô tả |
-|:---:|---|:---:|---|
-| `GET` | `/v1/admins/{id}/sessions` | `session:read_any` | Xem session đang hoạt động của admin |
-| `DELETE` | `/v1/admins/{id}/sessions/{sid}` | `session:revoke_any` | Kick 1 session cụ thể |
-| `DELETE` | `/v1/admins/{id}/sessions` | `session:revoke_any` | Kick tất cả session |
-
----
-
-### 5.5. Nhóm API Catalog — Mọi admin đã đăng nhập
-
-| Method | Endpoint | Mô tả |
-|:---:|---|---|
-| `GET` | `/v1/roles` | Danh sách roles và preset permissions mặc định |
-| `GET` | `/v1/permissions` | Danh sách tất cả permissions trong hệ thống |
-
----
-
-### 5.6. Nhóm API Audit — Yêu cầu `audit:read`
-
-| Method | Endpoint | Mô tả |
-|:---:|---|---|
-| `GET` | `/v1/audit-events` | Truy vấn audit log (hỗ trợ filter) |
-
-**Query Parameters:**
-
-| Param | Type | Mô tả |
-|---|---|---|
-| `actorId` | String | Lọc theo ID admin thực hiện |
-| `action` | String | Lọc theo loại hành động (VD: `LOGIN_SUCCESS`, `ACCOUNT_CREATED`) |
-| `start` | ISO DateTime | Thời gian bắt đầu |
-| `end` | ISO DateTime | Thời gian kết thúc |
-| `page` | int | Số trang (mặc định 0) |
-| `size` | int | Số bản ghi / trang (mặc định 50) |
-
-**Ví dụ:**
-```
-GET /v1/audit-events?action=LOGIN_SUCCESS&start=2026-09-01T00:00:00&size=20
-```
-
----
-
-## 6. Chuẩn hóa Response & Mã lỗi
-
-Mọi phản hồi từ hệ thống đều được chuẩn hóa qua `ApiResponse<T>`:
-
-**Thành công (HTTP 200):**
-```json
-{
-  "success": true,
-  "message": "Success",
-  "data": { ... },
-  "timestamp": "2026-09-22T09:00:00Z"
-}
-```
-
-**Xác thực sai (HTTP 401 Unauthorized):**
-```json
-{
-  "success": false,
-  "message": "Invalid username or password",
-  "timestamp": "2026-09-22T09:00:00Z"
-}
-```
-
-**Không có quyền (HTTP 403 Forbidden):**
-```json
-{
-  "success": false,
-  "message": "Access denied: insufficient permissions",
-  "timestamp": "2026-09-22T09:00:00Z"
-}
-```
-
-**Sai định dạng (HTTP 400 Bad Request):**
-```json
-{
-  "success": false,
-  "message": "Validation failed",
-  "data": {
-    "username": "Username cannot be blank",
-    "email": "Invalid email format"
-  },
-  "timestamp": "2026-09-22T09:00:00Z"
-}
-```
-
-**Vi phạm nghiệp vụ (HTTP 422 Unprocessable Entity):**
-```json
-{
-  "success": false,
-  "message": "Cannot disable your own account",
-  "timestamp": "2026-09-22T09:00:00Z"
-}
-```
-
-**Tài khoản bị khóa (HTTP 423 Locked):**
-```json
-{
-  "success": false,
-  "message": "Account is locked due to too many failed login attempts. Try again after 30 minutes",
-  "timestamp": "2026-09-22T09:00:00Z"
-}
-```
-
----
-
-## 7. Thiết kế cơ sở dữ liệu
-
-### 7.1. Sơ đồ quan hệ (ERD)
-
-```
-┌──────────┐       ┌───────────┐       ┌──────────────┐
-│  admins  │──┐    │   roles   │──┐    │ permissions  │
-│          │  │    │           │  │    │              │
-│ id (PK)  │  │    │ id (PK)   │  │    │ id (PK)      │
-│ username │  │    │ code      │  │    │ code         │
-│ email    │  │    │ name      │  │    │ name         │
-│ password │  │    │ tier      │  │    │ category     │
-│ status   │  │    └─────┬─────┘  │    └──────┬───────┘
-└────┬─────┘  │          │        │           │
-     │        │    ┌─────▼────────▼───┐       │
-     │        ├───▶│ admin_roles      │       │
-     │        │    │ admin_id (FK)    │       │
-     │        │    │ role_id (FK)     │       │
-     │        │    └──────────────────┘       │
-     │        │                               │
-     │        │    ┌──────────────────────┐    │
-     │        ├───▶│ admin_permissions    │◀───┘
-     │        │    │ admin_id (FK)        │
-     │        │    │ permission_id (FK)   │
-     │        │    │ scope (TEXT/JSON)    │
-     │        │    │ granted_by          │
-     │        │    └──────────────────────┘
-     │        │         ▲ Nguồn sự thật Authorization
-     │        │
-     │        │    ┌──────────────────────┐
-     │        ├───▶│ refresh_tokens       │
-     │        │    │ token_hash           │
-     │        │    │ family_id (rotation) │
-     │        │    └──────────────────────┘
-     │        │
-     │        │    ┌──────────────────────┐
-     │        ├───▶│ mfa_totp_secrets     │
-     │        │    └──────────────────────┘
-     │        │
-     │        │    ┌──────────────────────┐
-     │        ├───▶│ mfa_backup_codes     │
-     │        │    └──────────────────────┘
-     │        │
-     │        │    ┌──────────────────────┐
-     │        └───▶│ password_history     │
-     │             └──────────────────────┘
-     │
-     │         ┌──────────────────────┐
-     └────────▶│ audit_events         │
-               │ actor_id, action,    │
-               │ target_id, ip,      │
-               │ before/after_state  │
-               └──────────────────────┘
-
-┌─────────────────────────┐
-│ role_permissions        │
-│ role_id ↔ permission_id │
-│ (Preset mặc định)      │
-└─────────────────────────┘
-```
-
-### 7.2. Danh sách bảng (11 bảng)
-
-| Bảng | Nội dung chính |
-|---|---|
-| `admins` | Tài khoản admin: username, email, password_hash, status, lockout, must_change_password |
-| `roles` | Catalog role: code, name, tier (1-5) |
-| `permissions` | Catalog permission: code, name, category |
-| `role_permissions` | Preset mặc định: role → danh sách permission (template khi gán role) |
-| `admin_roles` | Admin ↔ Role (N:N) — role = tier + preset đã apply |
-| `admin_permissions` | **Nguồn sự thật authorization**: admin ↔ permission + scope + granted_by |
-| `refresh_tokens` | Refresh token: hash, family_id (rotation), session_id, replaced_by |
-| `mfa_totp_secrets` | TOTP secret + confirmed status |
-| `mfa_backup_codes` | Backup codes (hash), used_at |
-| `password_history` | Lịch sử 5 mật khẩu gần nhất (chống trùng) |
-| `audit_events` | Nhật ký kiểm toán: actor, action, target, IP, user_agent, before/after state |
-
-### 7.3. Redis Keys
-
-| Key Pattern | TTL | Nội dung |
-|---|---|---|
-| `session:{sid}` | 30 phút | Session data: admin_id, ip, user_agent, created_at, last_used |
-| `login_attempts:{username}` | 30 phút | Đếm số lần login sai liên tiếp |
-
----
-
-## 8. Bảo mật & Phân quyền
-
-### 8.1. JWT RS256
-
-| Thông số | Giá trị |
-|---|---|
-| Thuật toán ký | **RS256** (asymmetric — RSA 2048-bit) |
-| Access token TTL | **30 phút** |
-| Refresh token TTL | **24 giờ** (absolute), rotation mỗi lần refresh |
-| Claims | `sub`, `roles`, `permissions` (nhúng grant + scope), `sid`, `mfa_verified`, `iat`, `exp` |
-| Public key endpoint | `GET /.well-known/jwks.json` |
-
-### 8.2. Mô hình phân quyền Hybrid (RBAC + PBAC)
-
-```
-                    Role = Tier + Preset
-                    ┌─────────────────────────┐
-                    │ SUPERADMIN (tier 1)      │──▶ Preset: ALL permissions
-                    │ OPERATIONS_ADMIN (tier 2)│──▶ Preset: admin:*, session:*
-                    │ SERVICE_ADMIN (tier 3)   │──▶ Preset: config:*, ops:*, recon:*
-                    │ THIRD_PARTY_ADMIN (tier 4)│──▶ Preset: recon:read, report:read
-                    │ AUDITOR (tier 5)         │──▶ Preset: audit:read, report:read
-                    └──────────┬──────────────┘
-                               │
-                    Khi gán role, preset được preload
-                    SUPERADMIN/OPS_ADMIN chỉnh thêm/bớt
-                               │
-                               ▼
-                    admin_permissions (Nguồn sự thật)
-                    ┌────────────────────────────────────┐
-                    │ admin_id │ permission │ scope       │
-                    │ adm-001  │ config:read│ sys-params  │
-                    │ adm-001  │ config:write│ sys-params │
-                    │ adm-002  │ config:read│ sys-params  │
-                    │ adm-002  │ config:approve│ sys-params│
-                    └────────────────────────────────────┘
-                               │
-                    Nhúng vào JWT access token
-                               │
-                               ▼
-                    Service con dùng @authz.hasPerm()
-                    để kiểm tra permission + scope
-```
-
-### 8.3. Tier Guardrail
-
-| Người thao tác | Phạm vi quản lý |
-|---|---|
-| `SUPERADMIN` (tier 1) | Quản lý **tất cả** admin, kể cả OPERATIONS_ADMIN |
-| `OPERATIONS_ADMIN` (tier 2) | Chỉ quản lý **tier 3+** (SERVICE_ADMIN, THIRD_PARTY, AUDITOR) |
-| Không ai | Tự đổi role/permission **chính mình** |
-| Không ai | OPERATIONS_ADMIN thao tác lên SUPERADMIN hoặc OPS_ADMIN khác |
-
-### 8.4. Danh sách Permissions (21 quyền)
-
-| ID | Code | Mô tả | Category |
-|:---:|---|---|---|
-| 1 | `admin:read` | Xem danh sách admin | ADMIN |
-| 2 | `admin:create` | Tạo tài khoản admin | ADMIN |
-| 3 | `admin:update` | Cập nhật thông tin admin | ADMIN |
-| 4 | `admin:disable` | Vô hiệu hóa admin | ADMIN |
-| 5 | `admin:enable` | Kích hoạt admin | ADMIN |
-| 6 | `admin:reset_password` | Reset mật khẩu | ADMIN |
-| 7 | `admin:assign_role` | Gán role cho admin | ADMIN |
-| 8 | `admin:assign_perm` | Gán trực tiếp permission | ADMIN |
-| 9 | `session:read_any` | Xem session người khác | SESSION |
-| 10 | `session:revoke_any` | Kick session người khác | SESSION |
-| 11 | `role:read` | Xem catalog role/permission | ROLE |
-| 12 | `audit:read` | Xem audit logs | AUDIT |
-| 13 | `ops:monitor:read` | Giám sát vận hành | OPS |
-| 14 | `ops:exception:handle` | Xử lý lỗi vận hành | OPS |
-| 15 | `recon:read` | Xem đối soát | RECON |
-| 16 | `recon:case:manage` | Quản lý case đối soát | RECON |
-| 17 | `report:read` | Xem báo cáo | REPORT |
-| 18 | `config:read` | Xem cấu hình tham số | CONFIG |
-| 19 | `config:write` | Tạo/sửa cấu hình (Maker) | CONFIG |
-| 20 | `config:approve` | Phê duyệt cấu hình (Checker) | CONFIG |
-| 21 | `auth:self` | Tự phục vụ (đổi MK, MFA, session) | AUTH |
-
----
-
-## 9. Chạy Tests
-
-Dự án đi kèm bộ **21 test cases** bao phủ toàn bộ luồng nghiệp vụ, security guardrails, token lifecycle, và session management:
-
+Chạy toàn bộ test suite bằng Maven:
 ```powershell
-mvn test
+mvn clean test
 ```
 
-### Bộ test bao gồm:
-
-| Test Class | Nội dung |
-|---|---|
-| `AdminAuthIntegrationTest` | End-to-end: JWKS discovery → login → access → list admins → logout → reject |
-| `JwtTokenProviderTest` | RS256 sign/verify, wildcard SUPERADMIN, session ID extraction |
-| `CustomAuthEvaluatorTest` | SUPERADMIN bypass, scope check, Maker-Checker isNotCreator |
-| `SessionRedisServiceTest` | Create/validate/revoke session, max concurrent sessions eviction |
-| `AuthServiceTest` | Login success, lockout, reuse detection, change password |
-| `AdminManagementServiceTest` | Tier guardrail, SUPERADMIN can create any, self-disable prevention, disable revokes sessions |
+Kết quả mong đợi:
+```
+[INFO] Results:
+[INFO] Tests run: 109, Failures: 0, Errors: 0, Skipped: 0
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+```
 
 ---
 
-## 10. Tech Stack
+## 📚 7. Trung tâm Tài liệu (Documentation Hub)
 
-| Thành phần | Công nghệ | Phiên bản |
-|---|---|---|
-| Runtime | Java | 21 |
-| Framework | Spring Boot | 3.3.4 |
-| Security | Spring Security | 6.x |
-| ORM | Spring Data JPA + Hibernate | — |
-| Database | PostgreSQL | 16-alpine |
-| Migration | Flyway | — |
-| Cache / Session | Redis (Lettuce) | 7-alpine |
-| JWT | Nimbus JOSE + JWT (RS256) | 9.37.3 |
-| MFA | GoogleAuth (TOTP) | 1.5.0 |
-| API Docs | springdoc-openapi (Swagger UI) | 2.6.0 |
-| Serialization | Jackson (JavaTimeModule) | — |
-| Utility | Lombok | — |
-| Test | JUnit 5, Mockito, H2 (in-memory), Spring Security Test | — |
-| Container | Docker Compose | — |
+Để tìm hiểu sâu hơn về từng khía cạnh kỹ thuật, vui lòng tham khảo các tài liệu chuyên biệt:
+
+1. 📘 **[SRS.md (Software Requirements Specification)](SRS.md):** 
+   Tài liệu đặc tả chuẩn IEEE 830: Mô tả chi tiết 6 Module chức năng, bảng đặc tả 26 REST APIs, mô hình Hybrid RBAC/ABAC, yêu cầu phi chức năng (NFR) và Ma trận truy vết yêu cầu (RTM).
+2. 🧪 **[TEST_SCENARIOS.md (Test Scenarios & Demo Guide)](TEST_SCENARIOS.md):**
+   Hướng dẫn từng bước thực hiện 9 kịch bản demo kiểm thử thực tế qua Swagger UI và Kafka UI (TOTP MFA, Hybrid RBAC, Kick Session, Reuse Detection, Audit Trail, Tier Guardrails, Outbox Kafka).
+3. 📋 **[TEST_CASES.md (Automated Test Cases & GAP Analysis)](TEST_CASES.md):**
+   Đặc tả chi tiết 110 test cases tự động, đối sánh mã lỗi HTTP và bảng phân tích nợ kỹ thuật (GAPs).
+4. ⚙️ **[KAFKA_PLAN.md (Transactional Outbox & Kafka Architecture)](KAFKA_PLAN.md):**
+   Kiến trúc chi tiết về luồng chống Dual-Write, định dạng Avro, Confluent Schema Registry và thuật toán Polling `FOR UPDATE SKIP LOCKED`.
