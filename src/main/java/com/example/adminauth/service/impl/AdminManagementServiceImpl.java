@@ -312,9 +312,14 @@ public class AdminManagementServiceImpl implements AdminManagementService {
                 .map(ar -> ar.getRole().getCode())
                 .toList();
 
-        List<GrantDto> grantDtos = adminMapper.toGrantDtoList(
-                adminPermissionRepository.findByAdminIdAndRevokedAtIsNull(adminId)
-        );
+        List<GrantDto> grantDtos;
+        if (roleCodes.contains("SUPERADMIN")) {
+            grantDtos = List.of(new GrantDto("*", List.of("*")));
+        } else {
+            grantDtos = adminMapper.toGrantDtoList(
+                    adminPermissionRepository.findByAdminIdAndRevokedAtIsNull(adminId)
+            );
+        }
 
         return adminMapper.toDetailDto(admin, roleCodes, grantDtos);
     }

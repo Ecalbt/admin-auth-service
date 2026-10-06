@@ -6,6 +6,7 @@ import com.example.adminauth.exception.BusinessException;
 import com.example.adminauth.exception.ResourceNotFoundException;
 import com.example.adminauth.repository.*;
 import com.example.adminauth.security.AdminPrincipal;
+import com.example.adminauth.security.jwt.GrantDto;
 import com.example.adminauth.security.session.SessionRedisService;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -377,6 +378,32 @@ class AdminManagementServiceTest {
         assertThatThrownBy(() -> adminManagementService.getAdminDetail("unknown-id"))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("Admin not found with id: unknown-id");
+    }
+
+    @Test
+    @DisplayName("A-08b: Get admin detail for SUPERADMIN returns wildcard grant")
+    void testSuperAdminDetailReturnsWildcard() {
+        Admin superAdmin = Admin.builder().id("adm-super").username("superadmin").build();
+        when(adminRepository.findById("adm-super")).thenReturn(Optional.of(superAdmin));
+        when(adminRoleRepository.findByAdminId("adm-super")).thenReturn(List.of(
+                AdminRole.builder().role(Role.builder().code("SUPERADMIN").tier(1).build()).build()
+        ));
+        when(adminMapper.toDetailDto(eq(superAdmin), eq(List.of("SUPERADMIN")), any())).thenAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            List<GrantDto> grants = inv.getArgument(2);
+            return AdminDetailDto.builder()
+                    .id("adm-super")
+                    .username("superadmin")
+                    .roles(List.of("SUPERADMIN"))
+                    .permissions(grants)
+                    .build();
+        });
+
+        AdminDetailDto detail = adminManagementService.getAdminDetail("adm-super");
+        assertThat(detail).isNotNull();
+        assertThat(detail.permissions()).hasSize(1);
+        assertThat(detail.permissions().get(0).perm()).isEqualTo("*");
+        assertThat(detail.permissions().get(0).scope()).containsExactly("*");
     }
 
     @Test
